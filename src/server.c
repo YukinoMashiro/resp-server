@@ -6,10 +6,23 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <string.h>
+#include <errno.h>
 #include "server.h"
 #include "error.h"
 
 respServer server;
+
+static int anetSetReuseAddr(int fd) {
+    int yes = 1;
+    /* Make sure connection-intensive things like the redis benchmark
+     * will be able to close/open sockets a zillion of times */
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+        printf("setsockopt SO_REUSEADDR: %s\r\n", strerror(errno));
+        return ERROR_FAILED;
+    }
+    return ERROR_SUCCESS;
+}
 
 int tcpServer(int port , int backlog) {
     int serverSocket = -1;
@@ -20,6 +33,8 @@ int tcpServer(int port , int backlog) {
         printf("create server socket failed.\r\n");
         return -1;
     }
+
+    anetSetReuseAddr(serverSocket);
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -43,10 +58,10 @@ void receiveClientData(eventLoop *el, int fd, int mask) {
 
     strLen = read(fd, buf, BUF_SIZE);
     if (strLen == 0) {
+        deleteFileEvent(el, fd, mask);
         close(fd);
         printf("closed client: %d\r\n", fd);
     } else {
-        //write(fd, buf, strLen);
         write(fd, "+OK\r\n", 5);
         printf("received from %d: %s", fd, buf);
     }

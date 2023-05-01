@@ -88,11 +88,48 @@ int addEpollEvent(eventLoop *el, int fd, int mask) {
     return 0;
 }
 
+void deleteEpollEvent(eventLoop *el, int fd, int delMask) {
+    epollData *state = el->epData;
+    struct epoll_event ee = {0};
+    int mask = el->fileEvents[fd].mask & (~delMask);
+
+    ee.events = 0;
+    if (mask & EVENT_READABLE) {
+        ee.events |= EPOLLIN;
+    }
+
+    if(mask & EVENT_WRITABLE) {
+        ee.events |= EPOLLOUT;
+    }
+
+    if (EVENT_NONE != mask) {
+        epoll_ctl(state->epollFd, EPOLL_CTL_MOD, fd, &ee);
+    } else {
+        epoll_ctl(state->epollFd, EPOLL_CTL_DEL, fd, &ee);
+    }
+}
+
+void deleteFileEvent(eventLoop *el, int fd, int mask) {
+    if (fd >= el->size) {
+        printf("fd out of range.\r\n");
+        return;
+    }
+    fileEvent *fe = &el->fileEvents[fd];
+    if (EVENT_NONE == fe->mask) {
+        printf("file event mask is EVENT_NONE.\r\n");
+        return;
+    }
+
+    deleteEpollEvent(el, fd, mask);
+    fe->mask = fe->mask & (~mask);
+}
+
 int eventPoll(eventLoop *el) {
     epollData *state = el->epData;
     int retval, numevents = 0;
 
     retval = epoll_wait(state->epollFd,state->events,el->size,-1);
+    printf("========\r\n");
     if (retval > 0) {
         int j;
 

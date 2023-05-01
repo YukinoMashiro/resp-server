@@ -40,6 +40,7 @@ typedef struct eventLoop {
 
 eventLoop *createEventLoop(int maxSize);
 int createFileEvent(eventLoop *el, int fd, int mask, void *proc);
+void deleteFileEvent(eventLoop *el, int fd, int mask);
 int eventPoll(eventLoop *el);
 
 #endif //RESP_SERVER_EVENT_H
