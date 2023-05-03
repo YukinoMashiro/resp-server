@@ -21,7 +21,7 @@
 respServer server;
 
 respCommand commandTable[] = {
-        {"test",testComand,-2},
+        {"test",testComand,0},
         {"command", commandCommand, -1}
 };
 
@@ -145,7 +145,7 @@ int processMultibulkBuffer(client *c) {
     if (c->multibulklen == 0) {
         /* The client should have been reset */
         //serverAssertWithInfo(c,NULL,c->argc == 0);
-        //assert(c->argc == 0);
+        assert(c->argc == 0);
         /* Multi bulk length cannot be read without a \r\n */
         newline = strchr(c->querybuf+c->qb_pos,'\r');
         if (newline == NULL) {
@@ -328,7 +328,7 @@ void resetClient(client *c) {
     c->bulklen = -1;
 }
 
-struct redisCommand *lookupCommand(sds name) {
+struct respCommand *lookupCommand(sds name) {
     return dictFetchValue(server.commands, name);
 }
 
@@ -358,6 +358,8 @@ int processCommand(client *c) {
     }
 
     c->cmd->proc(c);
+
+    resetClient(c);
 
     return C_OK;
 }
