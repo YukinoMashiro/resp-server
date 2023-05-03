@@ -149,7 +149,7 @@ int eventPoll(eventLoop *el) {
     return numevents;
 }
 
-int createFileEvent(eventLoop *el, int fd, int mask, void *proc) {
+int createFileEvent(eventLoop *el, int fd, int mask, void *proc, void *clientData) {
     if(fd >= el->size) {
         printf("fd out of range.\r\n");
         return ERROR_FAILED;
@@ -173,6 +173,8 @@ int createFileEvent(eventLoop *el, int fd, int mask, void *proc) {
     if (mask & EVENT_WRITABLE) {
         fe->wFileProc = proc;
     }
+
+    fe->clientData = clientData;
 
     return ERROR_SUCCESS;
 }

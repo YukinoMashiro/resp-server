@@ -73,7 +73,7 @@ ConnectionType CT_Socket = {
         .close = connSocketClose,
         .write = connSocketWrite,
         .read = connSocketRead,
-        .accept = connSocketAccept,
+        //.accept = connSocketAccept,
         .get_last_error = connSocketGetLastError
 };
 
@@ -90,4 +90,18 @@ connection *connCreateAcceptedSocket(int fd) {
     conn->fd = fd;
     conn->state = CONN_STATE_ACCEPTING;
     return conn;
+}
+
+/* Associate a private data pointer with the connection */
+void connSetPrivateData(connection *conn, void *data) {
+    conn->private_data = data;
+}
+
+/* Get the associated private data pointer */
+void *connGetPrivateData(connection *conn) {
+    return conn->private_data;
+}
+
+int connGetState(connection *conn) {
+    return conn->state;
 }

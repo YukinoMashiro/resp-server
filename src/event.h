@@ -13,7 +13,7 @@
 
 struct eventLoop;
 
-typedef void fileProc(struct eventLoop *eventLoop, int fd, int mask);
+typedef void fileProc(struct eventLoop *eventLoop, int fd, void *clientData, int mask);
 
 typedef struct epollData {
     int epollFd;
@@ -24,6 +24,7 @@ typedef struct fileEvent {
     int mask;
     fileProc *rFileProc;
     fileProc *wFileProc;
+    void *clientData;
 }fileEvent;
 
 typedef struct firedFileEvent {
@@ -39,7 +40,7 @@ typedef struct eventLoop {
 }eventLoop;
 
 eventLoop *createEventLoop(int maxSize);
-int createFileEvent(eventLoop *el, int fd, int mask, void *proc);
+int createFileEvent(eventLoop *el, int fd, int mask, void *proc, void *clientData);
 void deleteFileEvent(eventLoop *el, int fd, int mask);
 int eventPoll(eventLoop *el);
 
