@@ -6,6 +6,7 @@
 
 #include "command.h"
 #include "server.h"
+#include "reply.h"
 
 
 void testComand(client *c){

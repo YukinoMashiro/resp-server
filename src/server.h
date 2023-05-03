@@ -89,7 +89,7 @@ struct client {
     // 命令所有参数的长度,即所有参数的<length>之和
     size_t argv_len_sum;    /* Sum of lengths of objects in argv list. */
 
-    struct respCommand *cmd, *lastcmd;  /* Last command executed. */
+    struct respCommand *cmd;  /* Last command executed. */
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
 
     // 当前解析的命令请求中尚未处理的命令参数数量，它是通过读取RESP协议中的<element-num>得到的
