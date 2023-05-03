@@ -12,7 +12,8 @@ void testComand(client *c){
     connection *conn = NULL;
     printf("client.querybuf=%s\r\n", c->querybuf);
     conn = c->conn;
-    write(conn->fd, "+OK\r\n", 5);
+    addReplyError(c, "hello");
+    //write(conn->fd, "+OK\r\n", 5);
     //connClose(conn);
 }
 

@@ -31,6 +31,8 @@
 #define PROTO_REQ_INLINE 1
 #define PROTO_REQ_MULTIBULK 2
 
+#define NET_MAX_WRITES_PER_EVENT (1024*64)
+
 #define C_OK                    0
 #define C_ERR                   -1
 
@@ -61,6 +63,7 @@ typedef struct respServer {
     client *current_client;
     dict *commands;             /* Command table */
     int tcpkeepalive;
+    list *clients_pending_write;
 }respServer;
 
 typedef struct clientReplyBlock {
@@ -107,5 +110,7 @@ struct client {
 };
 
 extern respServer server;
+
+void addReplyError(client *c, const char *err);
 
 #endif //RESP_SERVER_SERVER_H

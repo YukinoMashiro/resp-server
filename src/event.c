@@ -129,7 +129,6 @@ int eventPoll(eventLoop *el) {
     int retval, numevents = 0;
 
     retval = epoll_wait(state->epollFd,state->events,el->size,-1);
-    printf("========\r\n");
     if (retval > 0) {
         int j;
 

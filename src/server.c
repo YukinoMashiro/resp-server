@@ -25,6 +25,84 @@ respCommand commandTable[] = {
         {"command", commandCommand, -1}
 };
 
+int clientHasPendingReplies(client *c) {
+    return c->bufpos || listLength(c->reply);
+}
+
+int prepareClientToWrite(client *c) {
+    if (!clientHasPendingReplies(c)) {
+        listAddNodeHead(server.clients_pending_write,c);
+    }
+    return C_OK;
+}
+
+int _addReplyToBuffer(client *c, const char *s, size_t len) {
+    size_t available = sizeof(c->buf)-c->bufpos;
+
+    /* If there already are entries in the reply list, we cannot
+     * add anything more to the static buffer. */
+    if (listLength(c->reply) > 0) return C_ERR;
+
+    /* Check that the buffer has enough space available for this string. */
+    if (len > available) return C_ERR;
+
+    memcpy(c->buf+c->bufpos,s,len);
+    c->bufpos+=len;
+    return C_OK;
+}
+
+void _addReplyProtoToList(client *c, const char *s, size_t len) {
+
+    listNode *ln = listLast(c->reply);
+    clientReplyBlock *tail = ln? listNodeValue(ln): NULL;
+
+    /* Note that 'tail' may be NULL even if we have a tail node, because when
+     * addReplyDeferredLen() is used, it sets a dummy node to NULL just
+     * fo fill it later, when the size of the bulk length is set. */
+
+    /* Append to tail string when possible. */
+    if (tail) {
+        /* Copy the part we can fit into the tail, and leave the rest for a
+         * new node */
+        size_t avail = tail->size - tail->used;
+        size_t copy = avail >= len? len: avail;
+        memcpy(tail->buf + tail->used, s, copy);
+        tail->used += copy;
+        s += copy;
+        len -= copy;
+    }
+    if (len) {
+        /* Create a new node, make sure it is allocated to at
+         * least PROTO_REPLY_CHUNK_BYTES */
+        size_t size = len < PROTO_REPLY_CHUNK_BYTES? PROTO_REPLY_CHUNK_BYTES: len;
+        tail = zmalloc(size + sizeof(clientReplyBlock));
+        /* take over the allocation's internal fragmentation */
+        tail->size = zmalloc_usable(tail) - sizeof(clientReplyBlock);
+        tail->used = len;
+        memcpy(tail->buf, s, len);
+        listAddNodeTail(c->reply, tail);
+        c->reply_bytes += tail->size;
+    }
+}
+
+void addReplyProto(client *c, const char *s, size_t len) {
+    if (prepareClientToWrite(c) != C_OK) return;
+    if (_addReplyToBuffer(c,s,len) != C_OK)
+        _addReplyProtoToList(c,s,len);
+}
+
+void addReplyErrorLength(client *c, const char *s, size_t len) {
+    /* If the string already starts with "-..." then the error code
+     * is provided by the caller. Otherwise we use "-ERR". */
+    if (!len || s[0] != '-') addReplyProto(c,"-ERR ",5);
+    addReplyProto(c,s,len);
+    addReplyProto(c,"\r\n",2);
+}
+
+void addReplyError(client *c, const char *err) {
+    addReplyErrorLength(c,err,strlen(err));
+}
+
 static int anetSetReuseAddr(int fd) {
     int yes = 1;
     /* Make sure connection-intensive things like the redis benchmark
@@ -96,7 +174,6 @@ client *createClient(connection *conn) {
     if (conn) {
         //将文件描述符设置为非阻塞模式
         connNonBlock(conn);
-        printf("connNonBlock\r\n");
 
         // 关闭TCP的Delay选项
         connEnableTcpNoDelay(conn);
@@ -150,12 +227,11 @@ int processMultibulkBuffer(client *c) {
         newline = strchr(c->querybuf+c->qb_pos,'\r');
         if (newline == NULL) {
             if (sdslen(c->querybuf)-c->qb_pos > PROTO_INLINE_MAX_SIZE) {
-                //addReplyError(c,"Protocol error: too big mbulk count string");
+                addReplyError(c,"Protocol error: too big mbulk count string");
                 printf("too big mbulk count string.\r\n");
             }
             return C_ERR;
         }
-
         /* Buffer should also contain \n */
         if (newline-(c->querybuf+c->qb_pos) > (ssize_t)(sdslen(c->querybuf)-c->qb_pos-2))
             return C_ERR;
@@ -333,12 +409,6 @@ struct respCommand *lookupCommand(sds name) {
 }
 
 int processCommand(client *c) {
-
-    printf("client =====>\r\n");
-    if (NULL == c->argv[0]) {
-        printf("client is null\r\n");
-    }
-
     // 使用命令名，从server.commands命令字典中查找对应的redisCommand，并检查参数数量是否满足命令要求
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
@@ -589,6 +659,133 @@ void initConf() {
     server.commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable();
     server.tcpkeepalive = 300;
+    server.clients_pending_write = listCreate();
+}
+
+int writeToClient(client *c, int handler_installed) {
+    ssize_t nwritten = 0, totwritten = 0;
+    size_t objlen;
+    clientReplyBlock *o;
+
+    //  回复缓冲区存在数据
+    while(clientHasPendingReplies(c)) {
+        // 固定缓冲区写入TCP
+        if (c->bufpos > 0) {
+            nwritten = connWrite(c->conn,c->buf+c->sentlen,c->bufpos-c->sentlen);
+            if (nwritten <= 0) break;
+            c->sentlen += nwritten;
+            totwritten += nwritten;
+
+            /* If the buffer was sent, set bufpos to zero to continue with
+             * the remainder of the reply. */
+
+            // 如果缓冲区已发送，则将 bufpos 设置为零以继续回复的其余部分
+            if ((int)c->sentlen == c->bufpos) {
+                c->bufpos = 0;
+                c->sentlen = 0;
+            }
+        } else {
+
+            // 不固定回复缓冲区写入TCP
+            o = listNodeValue(listFirst(c->reply));
+            objlen = o->used;
+
+            if (objlen == 0) {
+                c->reply_bytes -= o->size;
+                listDelNode(c->reply,listFirst(c->reply));
+                continue;
+            }
+
+            nwritten = connWrite(c->conn, o->buf + c->sentlen, objlen - c->sentlen);
+            if (nwritten <= 0) break;
+            c->sentlen += nwritten;
+            totwritten += nwritten;
+
+            /* If we fully sent the object on head go to the next one */
+            if (c->sentlen == objlen) {
+                c->reply_bytes -= o->size;
+                listDelNode(c->reply,listFirst(c->reply));
+                c->sentlen = 0;
+                /* If there are no longer objects in the list, we expect
+                 * the count of reply bytes to be exactly zero. */
+                if (listLength(c->reply) == 0)
+                    assert(c->reply_bytes == 0);
+            }
+        }
+        /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
+         * bytes, in a single threaded server it's a good idea to serve
+         * other clients as well, even if a very large request comes from
+         * super fast link that is always able to accept data (in real world
+         * scenario think about 'KEYS *' against the loopback interface).
+         *
+         * However if we are over the maxmemory limit we ignore that and
+         * just deliver as much data as it is possible to deliver.
+         *
+         * Moreover, we also send as much as possible if the client is
+         * a slave or a monitor (otherwise, on high-speed traffic, the
+         * replication/output buffer will grow indefinitely) */
+
+        /* 在单线程服务器中, 我们避免发送超过NET_MAX_WRITES_PER_EVENT字节，最好也为其他客户端提供服务 */
+        if (totwritten > NET_MAX_WRITES_PER_EVENT) {
+            break;
+        }
+    }
+    if (nwritten == -1) {
+        if (connGetState(c->conn) == CONN_STATE_CONNECTED) {
+            nwritten = 0;
+        } else {
+            printf("Error writing to client: %s.\r\n", connGetLastError(c->conn));
+            //freeClientAsync(c);
+            return C_ERR;
+        }
+    }
+    if (!clientHasPendingReplies(c)) {
+        c->sentlen = 0;
+        if (handler_installed) {
+            deleteFileEvent(server.el, c->conn->fd, EVENT_READABLE);
+        }
+
+    }
+    return C_OK;
+}
+
+void sendReplyToClient(connection *conn) {
+    client *c = connGetPrivateData(conn);
+    writeToClient(c,1);
+}
+
+void handleClientsWithPendingWrites(void) {
+    listIter li;
+    listNode *ln;
+
+    int processed = listLength(server.clients_pending_write);
+    if (processed == 0) {
+        return;
+    }
+
+    listRewind(server.clients_pending_write,&li);
+    while((ln = listNext(&li))) {
+        client *c = listNodeValue(ln);
+        listDelNode(server.clients_pending_write,ln);
+
+        /* Try to write buffers to the client socket. */
+
+        // 将client回复缓冲区内容写入TCP发送缓冲区
+        if (writeToClient(c,0) == C_ERR) continue;
+
+        /* If after the synchronous writes above we still have data to
+         * output to the client, we need to install the writable handler. */
+
+        // 如果client回复缓冲区还有数据，则说明client回复缓冲区的内容过多，无法一次性写到TCP缓冲区中
+        // 这时要为当前连接注册监听WRITEABLE类型的文件事件，事件回掉为sendReplyToClient
+        // 等到TCP发送缓冲区可写后，该函数负责继续写入数据
+        if (clientHasPendingReplies(c)) {
+            createFileEvent(server.el, c->conn->fd, EVENT_READABLE, sendReplyToClient, NULL);
+            //f (connSetWriteHandlerWithBarrier(c->conn, sendReplyToClient, ae_barrier) == C_ERR) {
+                //freeClientAsync(c);
+            //}
+        }
+    }
 }
 
 void ProcessEvents() {
@@ -596,6 +793,7 @@ void ProcessEvents() {
     int numEvents;
     int j;
     for(;;) {
+        handleClientsWithPendingWrites();
         numEvents = eventPoll(el);
         for (j = 0; j < numEvents; j++) {
             fileEvent *fe = &el->fileEvents[el->firedFileEvents[j].fd];
