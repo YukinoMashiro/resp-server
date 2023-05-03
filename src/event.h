@@ -11,6 +11,8 @@
 #define EVENT_READABLE 1
 #define EVENT_WRITABLE 2
 
+#define EPOLL_SIZE     1024
+
 struct eventLoop;
 
 typedef void fileProc(struct eventLoop *eventLoop, int fd, void *clientData, int mask);

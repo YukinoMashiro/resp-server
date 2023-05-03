@@ -2,30 +2,30 @@
 // Created by yukino on 2023/4/29.
 //
 
-#include <malloc.h>
 #include <sys/epoll.h>
 #include "event.h"
 #include "error.h"
+#include "zmalloc.h"
 
 int createEpollData(eventLoop *el) {
-    epollData *state = malloc(sizeof(epollData));
+    epollData *state = zmalloc(sizeof(epollData));
     if (NULL == state) {
         printf("malloc epoll data failed.\r\n");
         return -1;
     }
 
-    state->events = malloc(sizeof(struct epoll_event) * el->size);
+    state->events = zmalloc(sizeof(struct epoll_event) * el->size);
     if (NULL == state->events) {
         printf("malloc epoll event failed.\r\n");
-        free(state);
+        zfree(state);
         return -1;
     }
 
-    state->epollFd = epoll_create(1024);
+    state->epollFd = epoll_create(EPOLL_SIZE);
     if (-1 == state->epollFd) {
         printf("create epoll socket failed.\r\n");
-        free(state->events);
-        free(state);
+        zfree(state->events);
+        zfree(state);
         return -1;
     }
     el->epData = state;
@@ -35,31 +35,31 @@ int createEpollData(eventLoop *el) {
 eventLoop *createEventLoop(int maxSize) {
     eventLoop *el = NULL;
 
-    el = malloc(sizeof(eventLoop));
+    el = zmalloc(sizeof(eventLoop));
     if (NULL == el) {
         printf("malloc event loop failed.\r\n");
         return NULL;
     }
     el->size = maxSize;
-    el->fileEvents = malloc(sizeof(fileEvent) * maxSize);
+    el->fileEvents = zmalloc(sizeof(fileEvent) * maxSize);
     if (NULL == el->fileEvents) {
-        free(el);
+        zfree(el);
         printf("malloc fileEvents failed.\r\n");
         return NULL;
     }
-    el->firedFileEvents = malloc(sizeof(firedFileEvent) * maxSize);
+    el->firedFileEvents = zmalloc(sizeof(firedFileEvent) * maxSize);
     if (NULL == el->firedFileEvents) {
-        free(el->fileEvents);
-        free(el);
+        zfree(el->fileEvents);
+        zfree(el);
         printf("malloc firedFileEvents failed.\r\n");
         return NULL;
     }
 
 
     if (-1 == createEpollData(el)) {
-        free(el->fileEvents);
-        free(el->firedFileEvents);
-        free(el);
+        zfree(el->fileEvents);
+        zfree(el->firedFileEvents);
+        zfree(el);
         return NULL;
     }
 
@@ -68,7 +68,7 @@ eventLoop *createEventLoop(int maxSize) {
 
 int addEpollEvent(eventLoop *el, int fd, int mask) {
     struct epoll_event ee = {0};
-    int op = 0;
+    int op;
 
     if (el->fileEvents[fd].mask == EVENT_NONE) {
         op = EPOLL_CTL_ADD;
@@ -81,7 +81,7 @@ int addEpollEvent(eventLoop *el, int fd, int mask) {
     if (mask & EVENT_READABLE) ee.events |= EPOLLIN;
     if (mask & EVENT_WRITABLE) ee.events |= EPOLLOUT;
     ee.data.fd = fd;
-    if (epoll_ctl(el->epData->epollFd,op,fd,&ee) == -1) {
+    if (-1 == epoll_ctl(el->epData->epollFd, op, fd,&ee)) {
         return -1;
     }
 
@@ -126,17 +126,16 @@ void deleteFileEvent(eventLoop *el, int fd, int mask) {
 
 int eventPoll(eventLoop *el) {
     epollData *state = el->epData;
-    int retval, numevents = 0;
+    int retVal, numEvents = 0;
 
-    retval = epoll_wait(state->epollFd,state->events,el->size,-1);
-    if (retval > 0) {
+    retVal = epoll_wait(state->epollFd,state->events,el->size,-1);
+    if (retVal > 0) {
         int j;
 
-        numevents = retval;
-        for (j = 0; j < numevents; j++) {
+        numEvents = retVal;
+        for (j = 0; j < numEvents; j++) {
             int mask = 0;
             struct epoll_event *e = state->events+j;
-            printf("fired events: %d\r\n", e->events);
             if (e->events & EPOLLIN) mask |= EVENT_READABLE;
             if (e->events & EPOLLOUT) mask |= EVENT_WRITABLE;
             if (e->events & EPOLLERR) mask |= EVENT_WRITABLE|EVENT_READABLE;
@@ -145,12 +144,16 @@ int eventPoll(eventLoop *el) {
             el->firedFileEvents[j].mask = mask;
         }
     }
-    return numevents;
+    return numEvents;
 }
 
 int createFileEvent(eventLoop *el, int fd, int mask, void *proc, void *clientData) {
+    if(-1 == fd) {
+        printf("invalid server fd.\r\n");
+        return ERROR_FAILED;
+    }
     if(fd >= el->size) {
-        printf("fd out of range.\r\n");
+        printf("server fd out of range.\r\n");
         return ERROR_FAILED;
     }
 

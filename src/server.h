@@ -36,6 +36,8 @@
 #define C_OK                    0
 #define C_ERR                   -1
 
+#define UNUSED(V) ((void) V)
+
 typedef struct client client;
 typedef void commandProc(client *c);
 
@@ -64,6 +66,7 @@ typedef struct respServer {
     dict *commands;             /* Command table */
     int tcpkeepalive;
     list *clients_pending_write;
+    list *clients_to_close;     /* Clients to close asynchronously */
 }respServer;
 
 typedef struct clientReplyBlock {
