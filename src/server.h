@@ -60,6 +60,7 @@ typedef struct respServer {
     long long proto_max_bulk_len;   /* Protocol bulk length maximum size. */
     client *current_client;
     dict *commands;             /* Command table */
+    int tcpkeepalive;
 }respServer;
 
 typedef struct clientReplyBlock {

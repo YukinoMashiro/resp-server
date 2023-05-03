@@ -94,17 +94,17 @@ client *createClient(connection *conn) {
 
     // 如果conn参数为NULL，则创建伪客户端
     if (conn) {
-        // 将文件描述符设置为非阻塞模式
-        //connNonBlock(conn);
+        //将文件描述符设置为非阻塞模式
+        connNonBlock(conn);
+        printf("connNonBlock\r\n");
 
         // 关闭TCP的Delay选项
-        //connEnableTcpNoDelay(conn);
+        connEnableTcpNoDelay(conn);
 
         // 开启TCP的keepAlive选项，服务器定时向空闲客户端发送ACK进行探测
-        //if (server.tcpkeepalive)
-        //    connKeepAlive(conn,server.tcpkeepalive);
-        //connSetReadHandler(conn, readQueryFromClient);
-
+        if (server.tcpkeepalive) {
+            connKeepAlive(conn,server.tcpkeepalive);
+        }
         // 将client赋值给conn.private_data，因此可以通过connection找到client
         connSetPrivateData(conn, c);
     }
@@ -588,6 +588,7 @@ void initConf() {
     server.current_client = NULL;
     server.commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable();
+    server.tcpkeepalive = 300;
 }
 
 void ProcessEvents() {
