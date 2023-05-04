@@ -9,21 +9,14 @@
 #include "reply.h"
 
 
-void testComand(client *c){
-    connection *conn = NULL;
-    printf("client.querybuf=%s\r\n", c->querybuf);
-    conn = c->conn;
-    addReplyError(c, "hello");
-    //write(conn->fd, "+OK\r\n", 5);
-    //connClose(conn);
+void testCommand(client *c){
+    addReply(c, shared.ok);
 }
 
 void commandCommand(client *c){
-    connection *conn = NULL;
-    printf("client.querybuf=%s\r\n", c->querybuf);
-    conn = c->conn;
-    //connWrite(conn, "+OK\r\n", 5);
-    printf("last client fd:%d\r\n", conn->fd);
-    write(conn->fd, "+OK\r\n", 5);
-    //connClose(conn);
+    addReply(c, shared.ok);
+}
+
+void pingCommand(client *c) {
+    addReply(c, shared.pong);
 }

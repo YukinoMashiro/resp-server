@@ -6,19 +6,19 @@
 #include "zmalloc.h"
 #include "adlist.h"
 #include "server.h"
+#include "util.h"
 
 int clientHasPendingReplies(client *c) {
     return c->bufpos || listLength(c->reply);
 }
 
-int prepareClientToWrite(client *c) {
+void prepareClientToWrite(client *c) {
     if (!clientHasPendingReplies(c)) {
         listAddNodeHead(server.clients_pending_write,c);
     }
-    return C_OK;
 }
 
-int _addReplyToBuffer(client *c, const char *s, size_t len) {
+int addReplyToBuffer(client *c, const char *s, size_t len) {
     size_t available = sizeof(c->buf)-c->bufpos;
 
     /* If there already are entries in the reply list, we cannot
@@ -33,7 +33,7 @@ int _addReplyToBuffer(client *c, const char *s, size_t len) {
     return C_OK;
 }
 
-void _addReplyProtoToList(client *c, const char *s, size_t len) {
+void addReplyProtoToList(client *c, const char *s, size_t len) {
 
     listNode *ln = listLast(c->reply);
     clientReplyBlock *tail = ln? listNodeValue(ln): NULL;
@@ -68,9 +68,9 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
 }
 
 void addReplyProto(client *c, const char *s, size_t len) {
-    if (prepareClientToWrite(c) != C_OK) return;
-    if (_addReplyToBuffer(c,s,len) != C_OK)
-        _addReplyProtoToList(c,s,len);
+    prepareClientToWrite(c);
+    if (addReplyToBuffer(c,s,len) != C_OK)
+        addReplyProtoToList(c,s,len);
 }
 
 void addReplyErrorLength(client *c, const char *s, size_t len) {
@@ -81,6 +81,41 @@ void addReplyErrorLength(client *c, const char *s, size_t len) {
     addReplyProto(c,"\r\n",2);
 }
 
+/*================================= reply interface ================================= */
+
 void addReplyError(client *c, const char *err) {
     addReplyErrorLength(c,err,strlen(err));
+}
+
+void addReply(client *c, robj *obj) {
+    prepareClientToWrite(c);
+
+    if (sdsEncodedObject(obj)) {
+        if (addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
+            addReplyProtoToList(c,obj->ptr,sdslen(obj->ptr));
+    } else if (obj->encoding == OBJ_ENCODING_INT) {
+        /* For integer encoded strings we just convert it into a string
+         * using our optimized function, and attach the resulting string
+         * to the output buffer. */
+        char buf[32];
+        size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
+        if (addReplyToBuffer(c,buf,len) != C_OK)
+            addReplyProtoToList(c,buf,len);
+    } else {
+        printf("Wrong obj->encoding in addReply()\r\n");
+    }
+}
+
+void addReplyErrorFormat(client *c, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap,fmt);
+    sds s = sdscatvprintf(sdsempty(),fmt,ap);
+    va_end(ap);
+    /* Trim any newlines at the end (ones will be added by addReplyErrorLength) */
+    s = sdstrim(s, "\r\n");
+    /* Make sure there are no newlines in the middle of the string, otherwise
+     * invalid protocol is emitted. */
+    s = sdsmapchars(s, "\r\n", "  ",  2);
+    addReplyErrorLength(c,s,sdslen(s));
+    sdsfree(s);
 }

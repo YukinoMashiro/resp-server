@@ -113,6 +113,7 @@ struct client {
 };
 
 extern respServer server;
+extern sharedObjectsStruct shared;
 
 void addReplyError(client *c, const char *err);
 

@@ -78,7 +78,6 @@ ConnectionType CT_Socket = {
         .close = connSocketClose,
         .write = connSocketWrite,
         .read = connSocketRead,
-        //.accept = connSocketAccept,
         .get_last_error = connSocketGetLastError
 };
 
@@ -112,9 +111,6 @@ int connGetState(connection *conn) {
 int netSetBlock(int fd, int non_block) {
     int flags;
 
-    /* Set the socket blocking (if non_block is zero) or non-blocking.
-     * Note that fcntl(2) for F_GETFL and F_SETFL can't be
-     * interrupted by a signal. */
     /* 获取fd的属性 */
     if ((flags = fcntl(fd, F_GETFL)) == -1) {
         printf("fcntl(F_GETFL): %s.\r\n", strerror(errno));

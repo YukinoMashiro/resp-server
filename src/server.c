@@ -17,55 +17,32 @@
 #include "util.h"
 #include "dict.h"
 #include "command.h"
+#include "reply.h"
 
-/*================================= Globals ================================= */
 respServer server;
-
+sharedObjectsStruct shared;
 respCommand commandTable[] = {
-        {"test",testComand,0},
-        {"command", commandCommand, -1}
+        {"test",testCommand,0},
+        {"command", commandCommand, -1},
+        {"ping", pingCommand, 0},
 };
 
-int setReuseAddr(int fd) {
-    int yes = 1;
-    /* Make sure connection-intensive things like the redis benchmark
-     * will be able to close/open sockets a zillion of times */
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        printf("setsockopt SO_REUSEADDR: %s\r\n", strerror(errno));
-        return ERROR_FAILED;
+void populateCommandTable(void) {
+    int j;
+    int numCommands = sizeof(commandTable) / sizeof(struct respCommand);
+
+    for (j = 0; j < numCommands; j++) {
+        struct respCommand *c = commandTable + j;
+        int retVal = dictAdd(server.commands, sdsnew(c->name), c);
+        assert(retVal == DICT_OK);
     }
-    return ERROR_SUCCESS;
 }
 
-int tcpServer(int port , int backlog) {
-    int serverSocket;
-    struct sockaddr_in server_addr = {0};
-
-    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
-    if (serverSocket == -1) {
-        printf("create server socket failed.\r\n");
-        return -1;
-    }
-
-    if (ERROR_SUCCESS != setReuseAddr(serverSocket)) {
-        close(serverSocket);
-        return -1;
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(port);
-
-    if (-1 == bind(serverSocket, (struct sockaddr*)&server_addr, sizeof(server_addr))) {
-        printf("bind server socket failed.\r\n");
-        return -1;
-    }
-
-    if (-1 == listen(serverSocket, backlog)) {
-        printf("listen server socket failed.\r\n");
-        return -1;
-    }
-    return serverSocket;
+void createSharedObjects(void) {
+    shared.crlf = createObject(OBJ_STRING, sdsnew("\r\n"));
+    shared.ok = createObject(OBJ_STRING, sdsnew("+OK\r\n"));
+    shared.err = createObject(OBJ_STRING, sdsnew("-ERR\r\n"));
+    shared.pong = createObject(OBJ_STRING,sdsnew("+PONG\r\n"));
 }
 
 void freeClientReplyValue(void *o) {
@@ -81,56 +58,9 @@ void *dupClientReplyValue(void *o) {
 
 void linkClient(client *c) {
     listAddNodeTail(server.clients,c);
-    /* Note that we remember the linked list node where the client is stored,
-     * this way removing the client in unlinkClient() will not require
-     * a linear scan, but just a constant time operation. */
     c->client_list_node = listLast(server.clients);
     uint64_t id = htonu64(c->id);
     //raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
-}
-
-client *createClient(connection *conn) {
-    client *c = zmalloc(sizeof(client));
-    if (NULL == c) {
-        printf("malloc client failed.\r\n");
-        return NULL;
-    }
-
-    if (conn) {
-        /* 将文件描述符设置为非阻塞模式 */
-        connNonBlock(conn);
-
-        /* 关闭TCP的Delay选项 */
-        connEnableTcpNoDelay(conn);
-
-        /* 开启TCP的keepAlive选项，服务器定时向空闲客户端发送ACK进行探测 */
-        if (server.tcpkeepalive) {
-            connKeepAlive(conn,server.tcpkeepalive);
-        }
-
-        connSetPrivateData(conn, c);
-    }
-    uint64_t client_id = ++server.next_client_id;
-    c->id = client_id;
-    c->conn = conn;
-    c->bufpos = 0;
-    c->qb_pos = 0;
-    c->querybuf = sdsempty();
-    c->reqtype = 0;
-    c->argc = 0;
-    c->argv = NULL;
-    c->argv_len_sum = 0;
-    c->cmd = NULL;
-    c->multibulklen = 0;
-    c->bulklen = -1;
-    c->sentlen = 0;
-    c->reply = listCreate();
-    c->reply_bytes = 0;
-    c->client_list_node = NULL;
-    listSetFreeMethod(c->reply,freeClientReplyValue);
-    listSetDupMethod(c->reply,dupClientReplyValue);
-    if (conn) linkClient(c);
-    return c;
 }
 
 int processMultibulkBuffer(client *c) {
@@ -197,9 +127,9 @@ int processMultibulkBuffer(client *c) {
 
             /* RESP格式 "$<length>\r\n<data>\r\n" */
             if (c->querybuf[c->qb_pos] != '$') {
-                //addReplyErrorFormat(c,
-                //                    "Protocol error: expected '$', got '%c'",
-                //                    c->querybuf[c->qb_pos]);
+                addReplyErrorFormat(c,
+                                    "Protocol error: expected '$', got '%c'",
+                                    c->querybuf[c->qb_pos]);
                 printf("expected $ but got something else.\r\n");
                 return ERROR_FAILED;
             }
@@ -293,6 +223,10 @@ static void freeClientArgv(client *c) {
     c->argv_len_sum = 0;
 }
 
+struct respCommand *lookupCommand(sds name) {
+    return dictFetchValue(server.commands, name);
+}
+
 void resetClient(client *c) {
     freeClientArgv(c);
     c->reqtype = 0;
@@ -300,12 +234,8 @@ void resetClient(client *c) {
     c->bulklen = -1;
 }
 
-struct respCommand *lookupCommand(sds name) {
-    return dictFetchValue(server.commands, name);
-}
-
-int processCommand(client *c) {
-
+void processCommand(client *c) {
+    int isProc = 1;
     /* c->argv[0]->ptr表示command name */
     c->cmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
@@ -313,25 +243,151 @@ int processCommand(client *c) {
         int i;
         for (i=1; i < c->argc && sdslen(args) < 128; i++)
             args = sdscatprintf(args, "`%.*s`, ", 128-(int)sdslen(args), (char*)c->argv[i]->ptr);
-        printf("unknown command `%s`, with args beginning with: %s.\r\n",
+        addReplyErrorFormat(c, "unknown command `%s`, with args beginning with: %s\r\n",
                             (char*)c->argv[0]->ptr, args);
         sdsfree(args);
-
-        //需要回复客户端，否则会卡死
-
-        return ERROR_SUCCESS;
+        isProc = 0;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
         printf("wrong number of arguments for '%s' command.\r\n",
                             c->cmd->name);
-        return ERROR_SUCCESS;
+        isProc = 0;
     }
 
-    c->cmd->proc(c);
+    if (isProc) {
+        c->cmd->proc(c);
+    }
 
     resetClient(c);
+}
 
+void unlinkClient(client *c) {
+
+    /* If this is marked as current client unset it. */
+    if (server.current_client == c) server.current_client = NULL;
+
+    /* Certain operations must be done only if the client has an active connection.
+     * If the client was already unlinked or if it's a "fake client" the
+     * conn is already set to NULL. */
+    if (c->conn) {
+        /* Remove from the list of active clients. */
+        if (c->client_list_node) {
+            uint64_t id = htonu64(c->id);
+            //raxRemove(server.clients_index,(unsigned char*)&id,sizeof(id),NULL);
+            listDelNode(server.clients,c->client_list_node);
+            c->client_list_node = NULL;
+        }
+        connClose(c->conn);
+        c->conn = NULL;
+    }
+}
+
+void freeClient(client *c) {
+    listNode *ln;
+
+    /* Free the query buffer */
+    sdsfree(c->querybuf);
+    c->querybuf = NULL;
+
+    /* Free data structures. */
+    listRelease(c->reply);
+    freeClientArgv(c);
+
+    /* Unlink the client: this will close the socket, remove the I/O
+     * handlers, and remove references of the client from different
+     * places where active clients may be referenced. */
+    unlinkClient(c);
+    zfree(c->argv);
+    c->argv_len_sum = 0;
+    zfree(c);
+}
+
+int setReuseAddr(int fd) {
+    int yes = 1;
+    /* Make sure connection-intensive things like the redis benchmark
+     * will be able to close/open sockets a zillion of times */
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+        printf("setsockopt SO_REUSEADDR: %s\r\n", strerror(errno));
+        return ERROR_FAILED;
+    }
     return ERROR_SUCCESS;
+}
+
+int tcpServer(int port , int backlog) {
+    int serverSocket;
+    struct sockaddr_in server_addr = {0};
+
+    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
+    if (serverSocket == -1) {
+        printf("create server socket failed.\r\n");
+        return -1;
+    }
+
+    if (ERROR_SUCCESS != setReuseAddr(serverSocket)) {
+        close(serverSocket);
+        return -1;
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(port);
+
+    if (-1 == bind(serverSocket, (struct sockaddr*)&server_addr, sizeof(server_addr))) {
+        printf("bind server socket failed.\r\n");
+        return -1;
+    }
+
+    if (-1 == listen(serverSocket, backlog)) {
+        printf("listen server socket failed.\r\n");
+        return -1;
+    }
+    return serverSocket;
+}
+
+uint64_t dictSdsCaseHash(const void *key) {
+    return dictGenCaseHashFunction((unsigned char*)key, sdslen((char*)key));
+}
+
+int dictSdsKeyCaseCompare(void *privdata, const void *key1,
+                          const void *key2)
+{
+    DICT_NOTUSED(privdata);
+
+    return strcasecmp(key1, key2) == 0;
+}
+
+void dictSdsDestructor(void *privdata, void *val)
+{
+    DICT_NOTUSED(privdata);
+
+    sdsfree(val);
+}
+
+/* Command table. sds string -> command struct pointer. */
+dictType commandTableDictType = {
+        dictSdsCaseHash,            /* hash function */
+        NULL,                       /* key dup */
+        NULL,                       /* val dup */
+        dictSdsKeyCaseCompare,      /* key compare */
+        dictSdsDestructor,          /* key destructor */
+        NULL                        /* val destructor */
+};
+
+void initConf() {
+    server.el = NULL;
+    server.port = DEFAULT_PORT;
+    server.ipFd = -1;
+    server.tcpBacklog = DEFAULT_BACKLOG;
+    server.maxClient = MAX_CLIENT_LIMIT;
+    server.clients = listCreate();
+    server.next_client_id = 1;
+    server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
+    server.proto_max_bulk_len = 512ll*1024*1024;
+    server.current_client = NULL;
+    server.commands = dictCreate(&commandTableDictType,NULL);
+    server.tcpkeepalive = 300;
+    server.clients_pending_write = listCreate();
+    server.clients_to_close = listCreate();
 }
 
 void processInputBuffer(client *c) {
@@ -443,6 +499,50 @@ void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
     processInputBuffer(c);
 }
 
+client *createClient(connection *conn) {
+    client *c = zmalloc(sizeof(client));
+    if (NULL == c) {
+        printf("malloc client failed.\r\n");
+        return NULL;
+    }
+
+    if (conn) {
+        /* 将文件描述符设置为非阻塞模式 */
+        connNonBlock(conn);
+
+        /* 关闭TCP的Delay选项 */
+        connEnableTcpNoDelay(conn);
+
+        /* 开启TCP的keepAlive选项，服务器定时向空闲客户端发送ACK进行探测 */
+        if (server.tcpkeepalive) {
+            connKeepAlive(conn,server.tcpkeepalive);
+        }
+
+        connSetPrivateData(conn, c);
+    }
+    uint64_t client_id = ++server.next_client_id;
+    c->id = client_id;
+    c->conn = conn;
+    c->bufpos = 0;
+    c->qb_pos = 0;
+    c->querybuf = sdsempty();
+    c->reqtype = 0;
+    c->argc = 0;
+    c->argv = NULL;
+    c->argv_len_sum = 0;
+    c->cmd = NULL;
+    c->multibulklen = 0;
+    c->bulklen = -1;
+    c->sentlen = 0;
+    c->reply = listCreate();
+    c->reply_bytes = 0;
+    c->client_list_node = NULL;
+    listSetFreeMethod(c->reply,freeClientReplyValue);
+    listSetDupMethod(c->reply,dupClientReplyValue);
+    if (conn) linkClient(c);
+    return c;
+}
+
 /**
  * 处理客户端的连接请求
  * @param el
@@ -484,53 +584,11 @@ void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     createFileEvent(el, clientFd, EVENT_READABLE, readQueryFromClient, conn);
 }
 
-uint64_t dictSdsCaseHash(const void *key) {
-    return dictGenCaseHashFunction((unsigned char*)key, sdslen((char*)key));
-}
-
-/* A case insensitive version used for the command lookup table and other
- * places where case insensitive non binary-safe comparison is needed. */
-int dictSdsKeyCaseCompare(void *privdata, const void *key1,
-                          const void *key2)
-{
-    DICT_NOTUSED(privdata);
-
-    return strcasecmp(key1, key2) == 0;
-}
-
-void dictSdsDestructor(void *privdata, void *val)
-{
-    DICT_NOTUSED(privdata);
-
-    sdsfree(val);
-}
-
-/* Command table. sds string -> command struct pointer. */
-dictType commandTableDictType = {
-        dictSdsCaseHash,            /* hash function */
-        NULL,                       /* key dup */
-        NULL,                       /* val dup */
-        dictSdsKeyCaseCompare,      /* key compare */
-        dictSdsDestructor,          /* key destructor */
-        NULL                        /* val destructor */
-};
-
-/**
- * 加载可用命令
- */
-void populateCommandTable(void) {
-    int j;
-    int numCommands = sizeof(commandTable) / sizeof(struct respCommand);
-
-    for (j = 0; j < numCommands; j++) {
-        struct respCommand *c = commandTable + j;
-        int retVal = dictAdd(server.commands, sdsnew(c->name), c);
-        assert(retVal == DICT_OK);
-    }
-}
-
 void initServer() {
     unsigned long error;
+
+    /* 创建共享数据集 */
+    createSharedObjects();
 
     /* 加载可用命令 */
     populateCommandTable();
@@ -553,79 +611,6 @@ void initServer() {
         return;
     }
 
-}
-
-void initConf() {
-    server.el = NULL;
-    server.port = DEFAULT_PORT;
-    server.ipFd = -1;
-    server.tcpBacklog = DEFAULT_BACKLOG;
-    server.maxClient = MAX_CLIENT_LIMIT;
-    server.clients = listCreate();
-    server.next_client_id = 1;
-    server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
-    server.proto_max_bulk_len = 512ll*1024*1024;
-    server.current_client = NULL;
-    server.commands = dictCreate(&commandTableDictType,NULL);
-    server.tcpkeepalive = 300;
-    server.clients_pending_write = listCreate();
-    server.clients_to_close = listCreate();
-}
-
-void unlinkClient(client *c) {
-
-    /* If this is marked as current client unset it. */
-    if (server.current_client == c) server.current_client = NULL;
-
-    /* Certain operations must be done only if the client has an active connection.
-     * If the client was already unlinked or if it's a "fake client" the
-     * conn is already set to NULL. */
-    if (c->conn) {
-        /* Remove from the list of active clients. */
-        if (c->client_list_node) {
-            uint64_t id = htonu64(c->id);
-            //raxRemove(server.clients_index,(unsigned char*)&id,sizeof(id),NULL);
-            listDelNode(server.clients,c->client_list_node);
-            c->client_list_node = NULL;
-        }
-        connClose(c->conn);
-        c->conn = NULL;
-    }
-}
-
-void freeClient(client *c) {
-    listNode *ln;
-
-    /* Free the query buffer */
-    sdsfree(c->querybuf);
-    c->querybuf = NULL;
-
-    /* Free data structures. */
-    listRelease(c->reply);
-    freeClientArgv(c);
-
-    /* Unlink the client: this will close the socket, remove the I/O
-     * handlers, and remove references of the client from different
-     * places where active clients may be referenced. */
-    unlinkClient(c);
-    zfree(c->argv);
-    c->argv_len_sum = 0;
-    zfree(c);
-}
-
-int freeClientsInAsyncFreeQueue(void) {
-    int freed = 0;
-    listIter li;
-    listNode *ln;
-
-    listRewind(server.clients_to_close,&li);
-    while ((ln = listNext(&li)) != NULL) {
-        client *c = listNodeValue(ln);
-        freeClient(c);
-        listDelNode(server.clients_to_close,ln);
-        freed++;
-    }
-    return freed;
 }
 
 void freeClientAsync(client *c) {
@@ -742,11 +727,26 @@ void handleClientsWithPendingWrites(void) {
     }
 }
 
+int freeClientsInAsyncFreeQueue(void) {
+    int freed = 0;
+    listIter li;
+    listNode *ln;
+
+    listRewind(server.clients_to_close,&li);
+    while ((ln = listNext(&li)) != NULL) {
+        client *c = listNodeValue(ln);
+        freeClient(c);
+        listDelNode(server.clients_to_close,ln);
+        freed++;
+    }
+    return freed;
+}
+
 void ProcessEvents() {
     eventLoop *el = server.el;
     int numEvents;
     int j;
-    for(;;) {
+    while(1) {
 
         /* 回复缓冲数据写入数据套接字 */
         handleClientsWithPendingWrites();

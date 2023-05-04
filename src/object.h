@@ -43,7 +43,9 @@
 #define OBJ_STATIC_REFCOUNT (INT_MAX-1) /* Object allocated in the stack. */
 #define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
 
-typedef struct redisObject {
+#define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
+
+typedef struct respObject {
     unsigned type:4;
     unsigned encoding:4;
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
@@ -52,6 +54,10 @@ typedef struct redisObject {
     int refcount;
     void *ptr;
 } robj;
+
+typedef struct sharedObjectsStruct{
+    robj *crlf, *ok, *err, *pong;
+} sharedObjectsStruct;
 
 robj *createObject(int type, void *ptr);
 robj *createStringObject(const char *ptr, size_t len);

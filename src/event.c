@@ -116,7 +116,6 @@ void deleteFileEvent(eventLoop *el, int fd, int mask) {
     }
     fileEvent *fe = &el->fileEvents[fd];
     if (EVENT_NONE == fe->mask) {
-        printf("file event mask is EVENT_NONE.\r\n");
         return;
     }
 

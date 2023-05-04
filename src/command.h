@@ -7,7 +7,8 @@
 
 #include "server.h"
 
-void testComand(client *c);
+void testCommand(client *c);
 void commandCommand(client *c);
+void pingCommand(client *c);
 
 #endif //RESP_SERVER_COMMAND_H
