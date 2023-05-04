@@ -9,6 +9,8 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <time.h>
+#include <sys/time.h>
 #include "server.h"
 #include "error.h"
 #include "connection.h"
@@ -18,6 +20,7 @@
 #include "dict.h"
 #include "command.h"
 #include "reply.h"
+#include "log.h"
 
 respServer server;
 sharedObjectsStruct shared;
@@ -234,6 +237,35 @@ void resetClient(client *c) {
     c->bulklen = -1;
 }
 
+/* Return the UNIX time in microseconds */
+long long ustime(void) {
+    struct timeval tv;
+    long long ust;
+
+    gettimeofday(&tv, NULL);
+    ust = ((long long)tv.tv_sec)*1000000;
+    ust += tv.tv_usec;
+    return ust;
+}
+
+void updateCachedTime(int update_daylight_info) {
+    server.ustime = ustime();
+    server.mstime = server.ustime / 1000;
+    server.unixtime = server.mstime / 1000;
+
+    /* To get information about daylight saving time, we need to call
+     * localtime_r and cache the result. However calling localtime_r in this
+     * context is safe since we will never fork() while here, in the main
+     * thread. The logging function will call a thread safe version of
+     * localtime that has no locks. */
+    if (update_daylight_info) {
+        struct tm tm;
+        time_t ut = server.unixtime;
+        localtime_r(&ut,&tm);
+        server.daylight_active = tm.tm_isdst;
+    }
+}
+
 void processCommand(client *c) {
     int isProc = 1;
     /* c->argv[0]->ptr表示command name */
@@ -257,7 +289,7 @@ void processCommand(client *c) {
     if (isProc) {
         c->cmd->proc(c);
     }
-
+    updateCachedTime(0);
     resetClient(c);
 }
 
@@ -374,6 +406,7 @@ dictType commandTableDictType = {
 };
 
 void initConf() {
+    updateCachedTime(1);
     server.el = NULL;
     server.port = DEFAULT_PORT;
     server.ipFd = -1;
@@ -388,6 +421,10 @@ void initConf() {
     server.tcpkeepalive = 300;
     server.clients_pending_write = listCreate();
     server.clients_to_close = listCreate();
+    server.logfile = "\0";
+    server.verbosity = LL_NOTICE;
+    server.syslog_enabled = 0;
+    server.timezone = getTimeZone();
 }
 
 void processInputBuffer(client *c) {
@@ -772,6 +809,8 @@ void ProcessEvents() {
 int main(int argc, char **argv) {
 
     initConf();
+
+    serverLog(LL_WARNING,"=== init ===");
 
     initServer();
 

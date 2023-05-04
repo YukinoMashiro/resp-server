@@ -40,6 +40,8 @@
 
 typedef struct client client;
 typedef void commandProc(client *c);
+typedef long long mstime_t; /* millisecond time type. */
+typedef long long ustime_t; /* microsecond time type. */
 
 typedef struct respCommand {
     // 命令名称，如SET、GET
@@ -67,6 +69,14 @@ typedef struct respServer {
     int tcpkeepalive;
     list *clients_pending_write;
     list *clients_to_close;     /* Clients to close asynchronously */
+    char *logfile;                  /* Path of log file */
+    int verbosity;
+    int syslog_enabled;
+    time_t timezone;
+    int daylight_active;        /* Currently in daylight saving time. */
+    mstime_t mstime;            /* 'unixtime' in milliseconds. */
+    ustime_t ustime;            /* 'unixtime' in microseconds. */
+    _Atomic time_t unixtime;    /* Unix time sampled every cron cycle. */
 }respServer;
 
 typedef struct clientReplyBlock {
