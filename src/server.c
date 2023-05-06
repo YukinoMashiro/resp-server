@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <time.h>
 #include <sys/time.h>
+#include <stdlib.h>
 #include "server.h"
 #include "error.h"
 #include "connection.h"
@@ -580,13 +581,6 @@ client *createClient(connection *conn) {
     return c;
 }
 
-/**
- * 处理客户端的连接请求
- * @param el
- * @param fd
- * @param clientData
- * @param mask
- */
 void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     socklen_t saSize;
     struct sockaddr_in sa;
@@ -621,33 +615,14 @@ void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     createFileEvent(el, clientFd, EVENT_READABLE, readQueryFromClient, conn);
 }
 
-void initServer() {
-    unsigned long error;
+int serverCron(struct eventLoop *el, long long id, void *clientData) {
+    UNUSED(el);
+    UNUSED(id);
+    UNUSED(clientData);
 
-    /* 创建共享数据集 */
-    createSharedObjects();
-
-    /* 加载可用命令 */
-    populateCommandTable();
-
-    /* 创建事件循环器 */
-    server.el = createEventLoop(server.maxClient);
-    if (NULL == server.el) {
-        return;
-    }
-
-    /* 开启TCP服务侦听，接收客户端请求 */
-    if (0 != server.port) {
-        server.ipFd = tcpServer(server.port, server.tcpBacklog);
-    }
-
-    /* 注册epoll事件 */
-    error = createFileEvent(server.el, server.ipFd, EVENT_READABLE, acceptTcpHandler, NULL);
-    if (ERROR_SUCCESS != error) {
-        printf("failed to create server.ipFd file event.\r\n");
-        return;
-    }
-
+    /* Update the time cache. */
+    updateCachedTime(1);
+    return EVENT_NOMORE;
 }
 
 void freeClientAsync(client *c) {
@@ -779,30 +754,59 @@ int freeClientsInAsyncFreeQueue(void) {
     return freed;
 }
 
-void ProcessEvents() {
+void beforeSleep(struct eventLoop *el) {
+    UNUSED(el);
+
+    /* 回复缓冲数据写入数据套接字 */
+    handleClientsWithPendingWrites();
+
+    /* 异步释放client */
+    freeClientsInAsyncFreeQueue();
+}
+
+void initServer() {
+    unsigned long error;
+
+    /* 创建共享数据集 */
+    createSharedObjects();
+
+    /* 加载可用命令 */
+    populateCommandTable();
+
+    /* 创建事件循环器 */
+    server.el = createEventLoop(server.maxClient);
+    if (NULL == server.el) {
+        return;
+    }
+
+    /* 创建时间事件 */
+    error = createTimeEvent(server.el, 1000, serverCron, NULL, NULL);
+    if (ERROR_SUCCESS != error) {
+        printf("Can't create event loop timers.\r\n");
+        exit(1);
+    }
+
+    /* 开启TCP服务侦听，接收客户端请求 */
+    if (0 != server.port) {
+        server.ipFd = tcpServer(server.port, server.tcpBacklog);
+    }
+
+    /* 注册epoll事件 */
+    error = createFileEvent(server.el, server.ipFd, EVENT_READABLE, acceptTcpHandler, NULL);
+    if (ERROR_SUCCESS != error) {
+        printf("failed to create server.ipFd file event.\r\n");
+        return;
+    }
+
+    /* 注册事件循环器的钩子函数 */
+    setBeforeSleepProc(server.el, beforeSleep);
+
+}
+
+void eventMain() {
     eventLoop *el = server.el;
-    int numEvents;
-    int j;
     while(1) {
-
-        /* 回复缓冲数据写入数据套接字 */
-        handleClientsWithPendingWrites();
-
-        /* 异步释放client */
-        freeClientsInAsyncFreeQueue();
-
-        numEvents = eventPoll(el);
-        for (j = 0; j < numEvents; j++) {
-            fileEvent *fe = &el->fileEvents[el->firedFileEvents[j].fd];
-            int mask = el->firedFileEvents[j].mask;
-            int fd = el->firedFileEvents[j].fd;
-            if(fe->mask & mask & EVENT_READABLE) {
-                fe->rFileProc(el, fd, fe->clientData, mask);
-            }
-            if (fe->mask & mask & EVENT_WRITABLE) {
-                fe->wFileProc(el, fd, fe->clientData, mask);
-            }
-        }
+        processEvents(el, EVENT_ALL_EVENTS | EVENT_CALL_BEFORE_SLEEP);
     }
 }
 
@@ -810,11 +814,9 @@ int main(int argc, char **argv) {
 
     initConf();
 
-    serverLog(LL_WARNING,"=== init ===");
-
     initServer();
 
-    ProcessEvents();
+    eventMain();
 
     return 0;
 }

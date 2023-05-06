@@ -105,7 +105,6 @@ void serverLogRaw(int level, const char *msg) {
     } else {
         int off;
         struct timeval tv;
-        int role_char;
 
         gettimeofday(&tv,NULL);
         struct tm tm;
