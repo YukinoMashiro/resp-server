@@ -26,6 +26,8 @@
 
 #define DEFAULT_TCP_KEEPALIVE 300
 
+#define MAX_ACCEPTS_PER_CALL 1000
+
 #define LONG_STR_SIZE      21          /* Bytes needed for long -> str + '\0' */
 #define REDIS_AUTOSYNC_BYTES (1024*1024*32) /* fdatasync every 32MB */
 

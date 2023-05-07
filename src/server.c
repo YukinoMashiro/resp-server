@@ -349,6 +349,7 @@ int tcpServer(int port , int backlog) {
         serverLog(LL_WARNING, "listen server socket failed.");
         return -1;
     }
+    netNonBlock(serverSocket);
     return serverSocket;
 }
 
@@ -569,32 +570,44 @@ void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     int clientFd;
     connection * conn = NULL;
     client *c = NULL;
+    int max = MAX_ACCEPTS_PER_CALL;
 
     UNUSED(clientData);
     UNUSED(mask);
 
-    saSize = sizeof(sa);
-    clientFd = accept(fd, (struct sockaddr*)&sa, &saSize);
-
-    conn = connCreateAcceptedSocket(clientFd);
-
-    if (listLength(server.clients) >= server.maxClient) {
-        char *err= "-ERR max number of clients reached.\r\n";
-        if (connWrite(conn,err,strlen(err)) == -1) {
-            /* Nothing to do, Just to avoid the warning... */
+    /* 每次事件循环中最多接收1000个客户请求，防止短时间内处理过多客户请求导致进程阻塞 */
+    while(max--) {
+        saSize = sizeof(sa);
+        clientFd = accept(fd, (struct sockaddr*)&sa, &saSize);
+        if (-1 == clientFd) {
+            if (errno != EWOULDBLOCK) {
+                serverLog(LL_WARNING,
+                          "Accepting client connection: %s", strerror(errno));
+            }
+            return;
         }
-        connClose(conn);
-        return;
+
+        conn = connCreateAcceptedSocket(clientFd);
+
+        if (listLength(server.clients) >= server.maxClient) {
+            char *err= "-ERR max number of clients reached.\r\n";
+            if (connWrite(conn,err,strlen(err)) == -1) {
+                /* Nothing to do, Just to avoid the warning... */
+            }
+            connClose(conn);
+            return;
+        }
+
+        c = createClient(conn);
+        if (NULL == c) {
+            serverLog(LL_WARNING, "Error registering fd event for the new client: %s.", connGetLastError(conn));
+            connClose(conn);
+            return;
+        }
+
+        createFileEvent(el, clientFd, EVENT_READABLE, readQueryFromClient, conn);
     }
 
-    c = createClient(conn);
-    if (NULL == c) {
-        serverLog(LL_WARNING, "Error registering fd event for the new client: %s.", connGetLastError(conn));
-        connClose(conn);
-        return;
-    }
-
-    createFileEvent(el, clientFd, EVENT_READABLE, readQueryFromClient, conn);
 }
 
 int serverCron(struct eventLoop *el, long long id, void *clientData) {

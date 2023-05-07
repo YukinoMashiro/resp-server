@@ -57,5 +57,6 @@ int connGetState(connection *conn);
 unsigned long connNonBlock(connection *conn);
 unsigned long connEnableTcpNoDelay(connection *conn);
 unsigned long connKeepAlive(connection *conn, int interval);
+unsigned long netNonBlock(int fd);
 
 #endif //RESP_SERVER_CONNECTION_H
