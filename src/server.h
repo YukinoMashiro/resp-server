@@ -12,7 +12,7 @@
 #include "object.h"
 #include "dict.h"
 
-#define DEFAULT_PORT 6379;
+#define DEFAULT_PORT 2233;
 #define DEFAULT_BACKLOG 511;
 #define MAX_CLIENT_LIMIT 10000;
 
@@ -22,6 +22,10 @@
 #define PROTO_REPLY_CHUNK_BYTES (16*1024) /* 16k output buffer */
 #define PROTO_INLINE_MAX_SIZE   (1024*64) /* Max size of inline reads */
 #define PROTO_MBULK_BIG_ARG     (1024*32)
+#define PROTO_MAX_BULK_LEN      (512ll*1024*1024)
+
+#define DEFAULT_TCP_KEEPALIVE 300
+
 #define LONG_STR_SIZE      21          /* Bytes needed for long -> str + '\0' */
 #define REDIS_AUTOSYNC_BYTES (1024*1024*32) /* fdatasync every 32MB */
 

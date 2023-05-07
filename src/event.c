@@ -331,19 +331,19 @@ int processTimeEvents(eventLoop *el) {
         if (now_sec > te->when_sec ||
             (now_sec == te->when_sec && now_ms >= te->when_ms))
         {
-            int retval;
+            int retVal;
 
             id = te->id;
             te->refcount++;
-            retval = te->timeProc(el, id, te->clientData);
+            retVal = te->timeProc(el, id, te->clientData);
             te->refcount--;
             processed++;
 
             /* 事件下次执行间隔时间等于AE_NOMORE，代表下次不再执行，需要删除时间事件 */
-            if (retval != EVENT_NOMORE) {
+            if (retVal != EVENT_NOMORE) {
 
                 /* 重新计算时间 */
-                addMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
+                addMillisecondsToNow(retVal,&te->when_sec,&te->when_ms);
             } else {
 
                 /* 标记删除 */

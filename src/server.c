@@ -388,22 +388,23 @@ dictType commandTableDictType = {
 };
 
 void initConf() {
+    server.port = DEFAULT_PORT;
+    server.logfile = "\0";
+
     updateCachedTime(1);
     server.el = NULL;
-    server.port = DEFAULT_PORT;
     server.ipFd = -1;
     server.tcpBacklog = DEFAULT_BACKLOG;
     server.maxClient = MAX_CLIENT_LIMIT;
     server.clients = listCreate();
     server.next_client_id = 1;
     server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
-    server.proto_max_bulk_len = 512ll*1024*1024;
+    server.proto_max_bulk_len = PROTO_MAX_BULK_LEN;
     server.current_client = NULL;
     server.commands = dictCreate(&commandTableDictType,NULL);
-    server.tcpkeepalive = 300;
+    server.tcpkeepalive = DEFAULT_TCP_KEEPALIVE;
     server.clients_pending_write = listCreate();
     server.clients_to_close = listCreate();
-    server.logfile = "\0";
     server.verbosity = LL_NOTICE;
     server.syslog_enabled = 0;
     server.timezone = getTimeZone();
@@ -770,7 +771,6 @@ void initServer() {
     error = createTimeEvent(server.el, 1, serverCron, NULL, NULL);
     if (ERROR_SUCCESS != error) {
         serverPanic("Can't create event loop timers.");
-        exit(1);
     }
 
     /* 开启TCP服务侦听，接收客户端请求 */
