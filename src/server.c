@@ -23,18 +23,12 @@
 
 respServer server;
 sharedObjectsStruct shared;
-respCommand commandTable[] = {
-        {"test",testCommand,0},
-        {"command", commandCommand, -1},
-        {"ping", pingCommand, 0},
-};
 
-void populateCommandTable(void) {
+void populateCommandTable(respCommand *commandTab, int numCommands) {
     int j;
-    int numCommands = sizeof(commandTable) / sizeof(struct respCommand);
 
     for (j = 0; j < numCommands; j++) {
-        struct respCommand *c = commandTable + j;
+        struct respCommand *c = commandTab + j;
         int retVal = dictAdd(server.commands, sdsnew(c->name), c);
         serverAssert(retVal == DICT_OK);
     }
@@ -387,26 +381,28 @@ dictType commandTableDictType = {
         NULL                        /* val destructor */
 };
 
-void initConf() {
+void initDefaultOptions() {
     server.port = DEFAULT_PORT;
     server.logfile = "\0";
+    server.tcpBacklog = DEFAULT_BACKLOG;
+    server.maxClient = MAX_CLIENT_LIMIT;
+    server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
+    server.proto_max_bulk_len = PROTO_MAX_BULK_LEN;
+    server.tcpkeepalive = DEFAULT_TCP_KEEPALIVE;
+    server.verbosity = LL_NOTICE;
+    server.syslog_enabled = 0;
+}
 
+void initServerAttr() {
     updateCachedTime(1);
     server.el = NULL;
     server.ipFd = -1;
-    server.tcpBacklog = DEFAULT_BACKLOG;
-    server.maxClient = MAX_CLIENT_LIMIT;
     server.clients = listCreate();
     server.next_client_id = 1;
-    server.client_max_querybuf_len = PROTO_MAX_QUERYBUF_LEN;
-    server.proto_max_bulk_len = PROTO_MAX_BULK_LEN;
     server.current_client = NULL;
     server.commands = dictCreate(&commandTableDictType,NULL);
-    server.tcpkeepalive = DEFAULT_TCP_KEEPALIVE;
     server.clients_pending_write = listCreate();
     server.clients_to_close = listCreate();
-    server.verbosity = LL_NOTICE;
-    server.syslog_enabled = 0;
     server.timezone = getTimeZone();
 }
 
@@ -752,14 +748,14 @@ void beforeSleep(struct eventLoop *el) {
     freeClientsInAsyncFreeQueue();
 }
 
-void initServer() {
+void initServer(respCommand *commandTab, int numCommands) {
     unsigned long error;
 
     /* 创建共享数据集 */
     createSharedObjects();
 
     /* 加载可用命令 */
-    populateCommandTable();
+    populateCommandTable(commandTab, numCommands);
 
     /* 创建事件循环器 */
     server.el = createEventLoop(server.maxClient);
@@ -796,13 +792,18 @@ void eventMain() {
     }
 }
 
-int main(int argc, char **argv) {
 
-    initConf();
+void RESP_INIT_OPTIONS(int port, char *logfile, respCommand *commandTab, int numCommand) {
+    serverAssert(logfile != NULL);
+    serverAssert(commandTab != NULL);
 
-    initServer();
+    initDefaultOptions();
+    server.port = port;
+    server.logfile = logfile;
+    initServerAttr();
+    initServer(commandTab, numCommand);
+}
 
+void RESP_LISTEN_EVENT() {
     eventMain();
-
-    return 0;
 }

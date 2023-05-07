@@ -59,23 +59,26 @@ typedef struct respCommand {
 }respCommand;
 
 typedef struct respServer {
-    eventLoop *el;                          /* 事件循环定时器 */
+    // 配置类
     int port;                               /* 端口 */
-    int ipFd;                               /* 服务端侦听套接字 */
+    char *logfile;                          /* 日志文件路径 */
     int tcpBacklog;                         /* TCP连接请求等待队列长度 */
     int maxClient;                          /* 最大客户端数量 */
-    list *clients;                          /* 客户端链表 */
-    _Atomic uint64_t next_client_id;        /* 下一个客户端ID */
     _Atomic size_t client_max_querybuf_len; /* 最大请求缓冲区限度 */
     long long proto_max_bulk_len;           /* 最大RESP协议<length>限度 */
-    client *current_client;                 /* 当前连接客户端 */
-    dict *commands;                         /* 已支持的命令表 */
     int tcpkeepalive;                       /* TCP保活时间 */
-    list *clients_pending_write;            /* 待回复客户端链表 */
-    list *clients_to_close;                 /* 待异步释放客户端 */
-    char *logfile;                          /* 日志文件路径 */
     int verbosity;                          /* 日志等级 */
     int syslog_enabled;                     /* syslog使能 */
+
+    // 其他类
+    eventLoop *el;                          /* 事件循环定时器 */
+    int ipFd;                               /* 服务端侦听套接字 */
+    list *clients;                          /* 客户端链表 */
+    _Atomic uint64_t next_client_id;        /* 下一个客户端ID */
+    client *current_client;                 /* 当前连接客户端 */
+    dict *commands;                         /* 已支持的命令表 */
+    list *clients_pending_write;            /* 待回复客户端链表 */
+    list *clients_to_close;                 /* 待异步释放客户端 */
     time_t timezone;                        /* 时区 */
     int daylight_active;
     mstime_t mstime;                        /* 以毫秒为单位的'unixtime' */
@@ -113,5 +116,9 @@ extern respServer server;
 extern sharedObjectsStruct shared;
 
 void addReplyError(client *c, const char *err);
+
+void RESP_INIT_OPTIONS(int port, char *logfile, respCommand *commandTab, int numCommand);
+
+void RESP_LISTEN_EVENT();
 
 #endif //RESP_SERVER_SERVER_H

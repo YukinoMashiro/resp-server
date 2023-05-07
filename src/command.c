@@ -8,7 +8,7 @@
 #include "server.h"
 #include "reply.h"
 
-
+/*
 void testCommand(client *c){
     addReply(c, shared.ok);
 }
@@ -20,3 +20,4 @@ void commandCommand(client *c){
 void pingCommand(client *c) {
     addReply(c, shared.pong);
 }
+ */
