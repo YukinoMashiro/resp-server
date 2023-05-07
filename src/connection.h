@@ -54,8 +54,8 @@ connection *connCreateAcceptedSocket(int fd);
 void connSetPrivateData(connection *conn, void *data);
 void *connGetPrivateData(connection *conn);
 int connGetState(connection *conn);
-int connNonBlock(connection *conn);
-int connEnableTcpNoDelay(connection *conn);
-int connKeepAlive(connection *conn, int interval);
+unsigned long connNonBlock(connection *conn);
+unsigned long connEnableTcpNoDelay(connection *conn);
+unsigned long connKeepAlive(connection *conn, int interval);
 
 #endif //RESP_SERVER_CONNECTION_H

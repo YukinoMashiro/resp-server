@@ -7,6 +7,7 @@
 #include "adlist.h"
 #include "server.h"
 #include "util.h"
+#include "log.h"
 
 int clientHasPendingReplies(client *c) {
     return c->bufpos || listLength(c->reply);
@@ -102,7 +103,7 @@ void addReply(client *c, robj *obj) {
         if (addReplyToBuffer(c,buf,len) != C_OK)
             addReplyProtoToList(c,buf,len);
     } else {
-        printf("Wrong obj->encoding in addReply()\r\n");
+        serverLog(LL_WARNING, "Wrong obj->encoding in addReply()");
     }
 }
 

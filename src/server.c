@@ -1,8 +1,6 @@
 //
 // Created by yukino on 2023/4/29.
 //
-
-#include <malloc.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -38,7 +36,7 @@ void populateCommandTable(void) {
     for (j = 0; j < numCommands; j++) {
         struct respCommand *c = commandTable + j;
         int retVal = dictAdd(server.commands, sdsnew(c->name), c);
-        assert(retVal == DICT_OK);
+        serverAssert(retVal == DICT_OK);
     }
 }
 
@@ -63,30 +61,28 @@ void *dupClientReplyValue(void *o) {
 void linkClient(client *c) {
     listAddNodeTail(server.clients,c);
     c->client_list_node = listLast(server.clients);
-    uint64_t id = htonu64(c->id);
-    //raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
 
-int processMultibulkBuffer(client *c) {
+unsigned long processMultibulkBuffer(client *c) {
     char *newline = NULL;
     int ok;
     long long ll;
 
     /* multibulklen == 0，代表上一个命令请求数据已解析完成，这里开始解析一个新的命令请求 */
     if (c->multibulklen == 0) {
-        assert(c->argc == 0);
+        serverAssert(c->argc == 0);
         newline = strchr(c->querybuf+c->qb_pos,'\r');
         if (newline == NULL) {
             if (sdslen(c->querybuf)-c->qb_pos > PROTO_INLINE_MAX_SIZE) {
                 addReplyError(c,"Protocol error: too big mbulk count string");
-                printf("too big mbulk count string.\r\n");
+                serverLog(LL_WARNING, "too big mbulk count string.");
             }
             return ERROR_FAILED;
         }
         if (newline-(c->querybuf+c->qb_pos) > (ssize_t)(sdslen(c->querybuf)-c->qb_pos-2))
             return ERROR_FAILED;
 
-        assert(c->querybuf[c->qb_pos] == '*');
+        serverAssert(c->querybuf[c->qb_pos] == '*');
 
         /*
          * resp协议格式为"*<element-num>\r\n<element1>\r\n...<element2>\r\n"
@@ -95,7 +91,7 @@ int processMultibulkBuffer(client *c) {
         ok = string2ll(c->querybuf+1+c->qb_pos,newline-(c->querybuf+1+c->qb_pos),&ll);
         if (!ok || ll > 1024*1024) {
             addReplyError(c,"Protocol error: invalid multibulk length");
-            printf("invalid mbulk count\r\n.");
+            serverLog(LL_WARNING,"invalid multibulk count.");
             return ERROR_FAILED;
         }
 
@@ -110,7 +106,7 @@ int processMultibulkBuffer(client *c) {
         c->argv_len_sum = 0;
     }
 
-    assert(c->multibulklen > 0);
+    serverAssert(c->multibulklen > 0);
 
     /* 读取当前命令的所有参数 */
     while(c->multibulklen) {
@@ -120,7 +116,7 @@ int processMultibulkBuffer(client *c) {
                 if (sdslen(c->querybuf)-c->qb_pos > PROTO_INLINE_MAX_SIZE) {
                     addReplyError(c,
                                   "Protocol error: too big bulk count string");
-                    printf("too big bulk count string.\r\n");
+                    serverLog(LL_WARNING,"too big bulk count string.");
                     return ERROR_FAILED;
                 }
                 break;
@@ -134,7 +130,7 @@ int processMultibulkBuffer(client *c) {
                 addReplyErrorFormat(c,
                                     "Protocol error: expected '$', got '%c'",
                                     c->querybuf[c->qb_pos]);
-                printf("expected $ but got something else.\r\n");
+                serverLog(LL_WARNING,"expected $ but got something else.");
                 return ERROR_FAILED;
             }
 
@@ -144,8 +140,8 @@ int processMultibulkBuffer(client *c) {
              */
             ok = string2ll(c->querybuf+c->qb_pos+1,newline-(c->querybuf+c->qb_pos+1),&ll);
             if (!ok || ll < 0 || ll > server.proto_max_bulk_len) {
-                //addReplyError(c,"Protocol error: invalid bulk length");
-                printf("invalid bulk length.\r\n");
+                addReplyError(c,"Protocol error: invalid bulk length");
+                serverLog(LL_WARNING,"invalid bulk length.");
                 return ERROR_FAILED;
             }
 
@@ -187,9 +183,10 @@ int processMultibulkBuffer(client *c) {
                  */
                 c->argv[c->argc++] = createObject(OBJ_STRING,c->querybuf);
                 c->argv_len_sum += c->bulklen;
-                sdsIncrLen(c->querybuf,-2); /* remove CRLF */
-                /* Assume that if we saw a fat argument we'll see another one
-                 * likely... */
+
+                /* 清除\r\n */
+                sdsIncrLen(c->querybuf,-2);
+
 
                 /* 申请新的内存空间作为查询缓冲区 */
                 c->querybuf = sdsnewlen(SDS_NOINIT,c->bulklen+2);
@@ -238,7 +235,6 @@ void resetClient(client *c) {
     c->bulklen = -1;
 }
 
-/* Return the UNIX time in microseconds */
 long long ustime(void) {
     struct timeval tv;
     long long ust;
@@ -254,11 +250,6 @@ void updateCachedTime(int update_daylight_info) {
     server.mstime = server.ustime / 1000;
     server.unixtime = server.mstime / 1000;
 
-    /* To get information about daylight saving time, we need to call
-     * localtime_r and cache the result. However calling localtime_r in this
-     * context is safe since we will never fork() while here, in the main
-     * thread. The logging function will call a thread safe version of
-     * localtime that has no locks. */
     if (update_daylight_info) {
         struct tm tm;
         time_t ut = server.unixtime;
@@ -267,23 +258,28 @@ void updateCachedTime(int update_daylight_info) {
     }
 }
 
+/**
+ * 执行命令
+ * @param c
+ */
 void processCommand(client *c) {
     int isProc = 1;
+
     /* c->argv[0]->ptr表示command name */
     c->cmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
         sds args = sdsempty();
         int i;
-        for (i=1; i < c->argc && sdslen(args) < 128; i++)
+        for (i=1; i < c->argc && sdslen(args) < 128; i++) {
             args = sdscatprintf(args, "`%.*s`, ", 128-(int)sdslen(args), (char*)c->argv[i]->ptr);
+        }
         addReplyErrorFormat(c, "unknown command `%s`, with args beginning with: %s\r\n",
                             (char*)c->argv[0]->ptr, args);
         sdsfree(args);
         isProc = 0;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
-        printf("wrong number of arguments for '%s' command.\r\n",
-                            c->cmd->name);
+        serverLog(LL_WARNING, "wrong number of arguments for '%s' command.", c->cmd->name);
         isProc = 0;
     }
 
@@ -296,17 +292,13 @@ void processCommand(client *c) {
 
 void unlinkClient(client *c) {
 
-    /* If this is marked as current client unset it. */
-    if (server.current_client == c) server.current_client = NULL;
+    if (server.current_client == c) {
+        server.current_client = NULL;
+    }
 
-    /* Certain operations must be done only if the client has an active connection.
-     * If the client was already unlinked or if it's a "fake client" the
-     * conn is already set to NULL. */
     if (c->conn) {
         /* Remove from the list of active clients. */
         if (c->client_list_node) {
-            uint64_t id = htonu64(c->id);
-            //raxRemove(server.clients_index,(unsigned char*)&id,sizeof(id),NULL);
             listDelNode(server.clients,c->client_list_node);
             c->client_list_node = NULL;
         }
@@ -316,19 +308,10 @@ void unlinkClient(client *c) {
 }
 
 void freeClient(client *c) {
-    listNode *ln;
-
-    /* Free the query buffer */
     sdsfree(c->querybuf);
     c->querybuf = NULL;
-
-    /* Free data structures. */
     listRelease(c->reply);
     freeClientArgv(c);
-
-    /* Unlink the client: this will close the socket, remove the I/O
-     * handlers, and remove references of the client from different
-     * places where active clients may be referenced. */
     unlinkClient(c);
     zfree(c->argv);
     c->argv_len_sum = 0;
@@ -337,10 +320,8 @@ void freeClient(client *c) {
 
 int setReuseAddr(int fd) {
     int yes = 1;
-    /* Make sure connection-intensive things like the redis benchmark
-     * will be able to close/open sockets a zillion of times */
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        printf("setsockopt SO_REUSEADDR: %s\r\n", strerror(errno));
+        serverLog(LL_WARNING, "setsockopt SO_REUSEADDR: %s", strerror(errno));
         return ERROR_FAILED;
     }
     return ERROR_SUCCESS;
@@ -352,7 +333,7 @@ int tcpServer(int port , int backlog) {
 
     serverSocket = socket(PF_INET, SOCK_STREAM, 0);
     if (serverSocket == -1) {
-        printf("create server socket failed.\r\n");
+        serverLog(LL_WARNING, "create server socket failed.");
         return -1;
     }
 
@@ -366,12 +347,12 @@ int tcpServer(int port , int backlog) {
     server_addr.sin_port = htons(port);
 
     if (-1 == bind(serverSocket, (struct sockaddr*)&server_addr, sizeof(server_addr))) {
-        printf("bind server socket failed.\r\n");
+        serverLog(LL_WARNING, "bind server socket failed.");
         return -1;
     }
 
     if (-1 == listen(serverSocket, backlog)) {
-        printf("listen server socket failed.\r\n");
+        serverLog(LL_WARNING, "listen server socket failed.");
         return -1;
     }
     return serverSocket;
@@ -399,10 +380,10 @@ void dictSdsDestructor(void *privdata, void *val)
 /* Command table. sds string -> command struct pointer. */
 dictType commandTableDictType = {
         dictSdsCaseHash,            /* hash function */
-        NULL,                       /* key dup */
-        NULL,                       /* val dup */
+        NULL,                           /* key dup */
+        NULL,                           /* val dup */
         dictSdsKeyCaseCompare,      /* key compare */
-        dictSdsDestructor,          /* key destructor */
+        dictSdsDestructor,         /* key destructor */
         NULL                        /* val destructor */
 };
 
@@ -428,6 +409,10 @@ void initConf() {
     server.timezone = getTimeZone();
 }
 
+/**
+ * 处理客户端请求缓冲区数据
+ * @param c
+ */
 void processInputBuffer(client *c) {
     while(c->qb_pos < sdslen(c->querybuf)) {
         /*
@@ -446,7 +431,7 @@ void processInputBuffer(client *c) {
         if (c->reqtype == PROTO_REQ_MULTIBULK) {
             if (processMultibulkBuffer(c) != ERROR_SUCCESS) break;
         } else {
-            printf("Unknown request type.\r\n");
+            serverLog(LL_WARNING, "Unknown request type.");
         }
 
         /* 执行命令 */
@@ -483,7 +468,7 @@ void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
     /*
      * 1. multibulklen !=0 ==> 当前解析的命令请求中尚未处理的命令参数数量不为0，即代表发生了拆包
      * 2. bulklen != -1    ==> 初始值为-1，发生拆包时不为-1
-     * 3. bulklen >= PROTO_MBULK_BIG_ARG ===> 超大参数
+     * 3. bulklen >= PROTO_MBULK_BIG_ARG ==> 超大参数
      */
     if (c->reqtype == PROTO_REQ_MULTIBULK && c->multibulklen && c->bulklen != -1
         && c->bulklen >= PROTO_MBULK_BIG_ARG)
@@ -514,12 +499,12 @@ void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
         if (connGetState(conn) == CONN_STATE_CONNECTED) {
             return;
         } else {
-            printf("Reading from client: %s.\r\n",connGetLastError(c->conn));
+            serverLog(LL_WARNING, "Reading from client: %s.", connGetLastError(c->conn));
             connClose(c->conn);
             return;
         }
     } else if (nread == 0) {
-        printf("Client closed connection.\r\n");
+        serverLog(LL_NOTICE, "Client closed connection.");
         connClose(c->conn);
         return;
     }
@@ -528,7 +513,7 @@ void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
     sdsIncrLen(c->querybuf,nread);
 
     if (sdslen(c->querybuf) > server.client_max_querybuf_len) {
-        printf("Closing client that reached max query buffer length.\r\n");
+        serverLog(LL_WARNING, "Closing client that reached max query buffer length.");
         connClose(c->conn);
         return;
     }
@@ -540,7 +525,7 @@ void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
 client *createClient(connection *conn) {
     client *c = zmalloc(sizeof(client));
     if (NULL == c) {
-        printf("malloc client failed.\r\n");
+        serverLog(LL_WARNING, "malloc client failed.");
         return NULL;
     }
 
@@ -607,7 +592,7 @@ void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
 
     c = createClient(conn);
     if (NULL == c) {
-        printf("Error registering fd event for the new client: %s.\r\n", connGetLastError(conn));
+        serverLog(LL_WARNING, "Error registering fd event for the new client: %s.", connGetLastError(conn));
         connClose(conn);
         return;
     }
@@ -685,7 +670,7 @@ int writeToClient(client *c, int handler_installed) {
         if (connGetState(c->conn) == CONN_STATE_CONNECTED) {
             nwritten = 0;
         } else {
-            printf("Error writing to client: %s.\r\n", connGetLastError(c->conn));
+            serverLog(LL_WARNING, "Error writing to client: %s.", connGetLastError(c->conn));
             freeClientAsync(c);
             return C_ERR;
         }
@@ -723,9 +708,11 @@ void handleClientsWithPendingWrites(void) {
         /* 将client回复缓冲区内容写入TCP发送缓冲区 */
         if (writeToClient(c,0) == C_ERR) continue;
 
-        // 如果client回复缓冲区还有数据，则说明client回复缓冲区的内容过多，无法一次性写到TCP缓冲区中
-        // 这时要为当前连接注册监听WRITEABLE类型的文件事件，事件回掉为sendReplyToClient
-        // 等到TCP发送缓冲区可写后，该函数负责继续写入数据
+        /*
+         * 如果client回复缓冲区还有数据，则说明client回复缓冲区的内容过多，无法一次性写到TCP缓冲区中，
+         * 这时要为当前连接注册监听WRITEABLE类型的文件事件，事件回调为sendReplyToClient，
+         * 等到TCP发送缓冲区可写后，该函数负责继续写入数据
+         */
         if (clientHasPendingReplies(c)) {
             errorCode = createFileEvent(server.el,
                                         c->conn->fd,
@@ -780,9 +767,9 @@ void initServer() {
     }
 
     /* 创建时间事件 */
-    error = createTimeEvent(server.el, 1000, serverCron, NULL, NULL);
+    error = createTimeEvent(server.el, 1, serverCron, NULL, NULL);
     if (ERROR_SUCCESS != error) {
-        printf("Can't create event loop timers.\r\n");
+        serverPanic("Can't create event loop timers.");
         exit(1);
     }
 
@@ -794,8 +781,7 @@ void initServer() {
     /* 注册epoll事件 */
     error = createFileEvent(server.el, server.ipFd, EVENT_READABLE, acceptTcpHandler, NULL);
     if (ERROR_SUCCESS != error) {
-        printf("failed to create server.ipFd file event.\r\n");
-        return;
+        serverPanic("Unrecoverable error creating server.ipFd file event.");
     }
 
     /* 注册事件循环器的钩子函数 */
@@ -806,7 +792,7 @@ void initServer() {
 void eventMain() {
     eventLoop *el = server.el;
     while(1) {
-        processEvents(el, EVENT_ALL_EVENTS | EVENT_CALL_BEFORE_SLEEP);
+        (void)processEvents(el, EVENT_ALL_EVENTS | EVENT_CALL_BEFORE_SLEEP);
     }
 }
 

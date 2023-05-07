@@ -8,24 +8,25 @@
 #include "event.h"
 #include "error.h"
 #include "zmalloc.h"
+#include "log.h"
 
 int createEpollData(eventLoop *el) {
     epollData *state = zmalloc(sizeof(epollData));
     if (NULL == state) {
-        printf("malloc epoll data failed.\r\n");
+        serverLog(LL_WARNING, "malloc epoll data failed.");
         return -1;
     }
 
     state->events = zmalloc(sizeof(struct epoll_event) * el->size);
     if (NULL == state->events) {
-        printf("malloc epoll event failed.\r\n");
+        serverLog(LL_WARNING, "malloc epoll event failed.");
         zfree(state);
         return -1;
     }
 
     state->epollFd = epoll_create(EPOLL_SIZE);
     if (-1 == state->epollFd) {
-        printf("create epoll socket failed.\r\n");
+        serverLog(LL_WARNING, "create epoll socket failed.");
         zfree(state->events);
         zfree(state);
         return -1;
@@ -45,7 +46,7 @@ eventLoop *createEventLoop(int maxSize) {
 
     el = zmalloc(sizeof(eventLoop));
     if (NULL == el) {
-        printf("malloc event loop failed.\r\n");
+        serverLog(LL_WARNING, "malloc event loop failed.");
         return NULL;
     }
     el->maxfd = -1;
@@ -53,17 +54,16 @@ eventLoop *createEventLoop(int maxSize) {
     el->fileEvents = zmalloc(sizeof(fileEvent) * maxSize);
     if (NULL == el->fileEvents) {
         zfree(el);
-        printf("malloc fileEvents failed.\r\n");
+        serverLog(LL_WARNING, "malloc fileEvents failed.");
         return NULL;
     }
     el->firedFileEvents = zmalloc(sizeof(firedFileEvent) * maxSize);
     if (NULL == el->firedFileEvents) {
         zfree(el->fileEvents);
         zfree(el);
-        printf("malloc firedFileEvents failed.\r\n");
+        serverLog(LL_WARNING, "malloc firedFileEvents failed.");
         return NULL;
     }
-
 
     if (-1 == createEpollData(el)) {
         zfree(el->fileEvents);
@@ -120,7 +120,7 @@ void deleteEpollEvent(eventLoop *el, int fd, int delMask) {
 
 void deleteFileEvent(eventLoop *el, int fd, int mask) {
     if (fd >= el->size) {
-        printf("fd out of range.\r\n");
+        serverLog(LL_WARNING, "fd out of range.");
         return;
     }
     fileEvent *fe = &el->fileEvents[fd];
@@ -132,7 +132,6 @@ void deleteFileEvent(eventLoop *el, int fd, int mask) {
     fe->mask = fe->mask & (~mask);
 
     if (fd == el->maxfd && fe->mask == EVENT_NONE) {
-        /* Update the max fd */
         int j;
 
         for (j = el->maxfd - 1; j >= 0; j--) {
@@ -157,10 +156,10 @@ int eventPoll(eventLoop *el, struct timeval *tvp) {
         for (j = 0; j < numEvents; j++) {
             int mask = 0;
             struct epoll_event *e = state->events+j;
-            if (e->events & EPOLLIN) mask |= EVENT_READABLE;
+            if (e->events & EPOLLIN) mask  |= EVENT_READABLE;
             if (e->events & EPOLLOUT) mask |= EVENT_WRITABLE;
-            if (e->events & EPOLLERR) mask |= EVENT_WRITABLE|EVENT_READABLE;
-            if (e->events & EPOLLHUP) mask |= EVENT_WRITABLE|EVENT_READABLE;
+            if (e->events & EPOLLERR) mask |= EVENT_WRITABLE | EVENT_READABLE;
+            if (e->events & EPOLLHUP) mask |= EVENT_WRITABLE | EVENT_READABLE;
             el->firedFileEvents[j].fd = e->data.fd;
             el->firedFileEvents[j].mask = mask;
         }
@@ -170,22 +169,22 @@ int eventPoll(eventLoop *el, struct timeval *tvp) {
 
 int createFileEvent(eventLoop *el, int fd, int mask, void *proc, void *clientData) {
     if(-1 == fd) {
-        printf("invalid server fd.\r\n");
+        serverLog(LL_WARNING, "invalid server fd when create file event.");
         return ERROR_FAILED;
     }
     if(fd >= el->size) {
-        printf("server fd out of range.\r\n");
+        serverLog(LL_WARNING, "server fd out of range.");
         return ERROR_FAILED;
     }
 
     fileEvent *fe = &el->fileEvents[fd];
     if (NULL == fe) {
-        printf("fileEvent is null.\r\n");
+        serverLog(LL_WARNING, "fileEvent is null.");
         return ERROR_FAILED;
     }
 
     if (-1 == addEpollEvent(el, fd, mask))  {
-        printf("add epoll event failed.\r\n");
+        serverLog(LL_WARNING, "add epoll event failed.");
         return ERROR_FAILED;
     }
 
@@ -219,12 +218,12 @@ static void getTime(long *seconds, long *milliseconds)
     *milliseconds = tv.tv_usec/1000;
 }
 
-static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) {
+static void addMillisecondsToNow(long long milliseconds, long *sec, long *ms) {
     long cur_sec, cur_ms, when_sec, when_ms;
 
     getTime(&cur_sec, &cur_ms);
-    when_sec = cur_sec + milliseconds/1000;
-    when_ms = cur_ms + milliseconds%1000;
+    when_sec = cur_sec + milliseconds / 1000;
+    when_ms = cur_ms + milliseconds % 1000;
     if (when_ms >= 1000) {
         when_sec ++;
         when_ms -= 1000;
@@ -237,29 +236,33 @@ unsigned long createTimeEvent(eventLoop *el, long long milliseconds,
                             timeProc *proc, void *clientData,
                             eventFinalizerProc *finalizerProc)
 {
-    /* 初始化aeTimeEvent属性 */
     long long id = el->timeEventNextId++;
     timeEvent *te;
 
     te = zmalloc(sizeof(*te));
-    if (te == NULL) return ERROR_FAILED;
+    if (NULL == te) {
+        return ERROR_FAILED;
+    }
     te->id = id;
-    /* 计算事件事件下一次执行的时间 */
-    aeAddMillisecondsToNow(milliseconds,&te->when_sec,&te->when_ms);
+
+    /* 计算时间事件下一次执行的时间 */
+    addMillisecondsToNow(milliseconds,&te->when_sec,&te->when_ms);
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+
     /* 头插到eventLoop->timeEventHead链表 */
     te->prev = NULL;
     te->next = el->timeEventHead;
     te->refcount = 0;
-    if (te->next)
+    if (te->next) {
         te->next->prev = te;
+    }
     el->timeEventHead = te;
     return ERROR_SUCCESS;
 }
 
-static timeEvent *searchNearestTimer(eventLoop *el)
+timeEvent *searchNearestTimer(eventLoop *el)
 {
     timeEvent *te = el->timeEventHead;
     timeEvent *nearest = NULL;
@@ -274,22 +277,14 @@ static timeEvent *searchNearestTimer(eventLoop *el)
     return nearest;
 }
 
-static int processTimeEvents(eventLoop *el) {
+int processTimeEvents(eventLoop *el) {
     int processed = 0;
     timeEvent *te;
     long long maxId;
     time_t now = time(NULL);
 
-    /* If the system clock is moved to the future, and then set back to the
-     * right value, time events may be delayed in a random way. Often this
-     * means that scheduled operations will not be performed soon enough.
-     *
-     * Here we try to detect system clock skews, and force all the time
-     * events to be processed ASAP when this happens: the idea is that
-     * processing events earlier is less dangerous than delaying them
-     * indefinitely, and practice suggests it is. */
-    /* 上次执行时间比当前时间更大，说明系统时间混乱了。这里将所有时间时间when_sec设置为0，这样会导致时间事件提前执行，提前执行事件的危害比
-     * 延后执行的小 */
+    /* 上次执行时间比当前时间更大，说明系统时间混乱了。这里将所有时间时间when_sec设置为0，
+     * 这样会导致时间事件提前执行，提前执行事件的危害比延后执行的小 */
     if (now < el->lastTime) {
         te = el->timeEventHead;
         while(te) {
@@ -299,20 +294,16 @@ static int processTimeEvents(eventLoop *el) {
     }
     el->lastTime = now;
 
-    /* 遍历事件 */
+    /* 遍历时间事件 */
     te = el->timeEventHead;
     maxId = el->timeEventNextId-1;
     while(te) {
         long now_sec, now_ms;
         long long id;
 
-        /* Remove events scheduled for deletion. */
-        /* AE_DELETED_EVENT_ID代表时间事件已经删除，将其从链表中移除 */
+        /* EVENT_DELETED_EVENT_ID 代表时间事件已经删除，将其从链表中移除 */
         if (te->id == EVENT_DELETED_EVENT_ID) {
             timeEvent *next = te->next;
-            /* If a reference exists for this timer event,
-             * don't free it. This is currently incremented
-             * for recursive timerProc calls */
             if (te->refcount) {
                 te = next;
                 continue;
@@ -330,15 +321,11 @@ static int processTimeEvents(eventLoop *el) {
             continue;
         }
 
-        /* Make sure we don't process time events created by time events in
-         * this iteration. Note that this check is currently useless: we always
-         * add new timers on the head, however if we change the implementation
-         * detail, this check may be useful again: we keep it here for future
-         * defense. */
         if (te->id > maxId) {
             te = te->next;
             continue;
         }
+
         /* 如果时间事件以达到执行时间，则执行timeProc函数，该函数返回下次执行时间的间隔 */
         getTime(&now_sec, &now_ms);
         if (now_sec > te->when_sec ||
@@ -351,15 +338,19 @@ static int processTimeEvents(eventLoop *el) {
             retval = te->timeProc(el, id, te->clientData);
             te->refcount--;
             processed++;
+
             /* 事件下次执行间隔时间等于AE_NOMORE，代表下次不再执行，需要删除时间事件 */
             if (retval != EVENT_NOMORE) {
-                /* 下次还要执行，时间累加上去 */
-                aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
+
+                /* 重新计算时间 */
+                addMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
             } else {
+
                 /* 标记删除 */
                 te->id = EVENT_DELETED_EVENT_ID;
             }
         }
+
         /* 处理下一个时间事件 */
         te = te->next;
     }
@@ -370,13 +361,10 @@ int processEvents(eventLoop *el, int flags)
 {
     int processed = 0, numEvents;
 
-    /* Nothing to do? return ASAP */
-    if (!(flags & EVENT_TIME_EVENTS) && !(flags & EVENT_FILE_EVENTS)) return 0;
+    if (!(flags & EVENT_TIME_EVENTS) && !(flags & EVENT_FILE_EVENTS)) {
+        return 0;
+    }
 
-    /* Note that we want call select() even if there are no
-     * file events to process as long as we want to process time
-     * events, in order to sleep until the next time event is ready
-     * to fire. */
     if (el->maxfd != -1 ||
         ((flags & EVENT_TIME_EVENTS) && !(flags & EVENT_DONT_WAIT))) {
         int j;
@@ -384,6 +372,7 @@ int processEvents(eventLoop *el, int flags)
         struct timeval tv, *tvp;
 
         if (flags & EVENT_TIME_EVENTS && !(flags & EVENT_DONT_WAIT))
+
             /* 查找当前最先执行的时间事件，如果能找到，则该事件执行时间减去当前时间作为进程最大阻塞时间 */
             shortest = searchNearestTimer(el);
         if (shortest) {
@@ -392,8 +381,6 @@ int processEvents(eventLoop *el, int flags)
             getTime(&now_sec, &now_ms);
             tvp = &tv;
 
-            /* How many milliseconds we need to wait for the next
-             * time event to fire? */
             long long ms =
                     (shortest->when_sec - now_sec)*1000 +
                     shortest->when_ms - now_ms;
@@ -406,11 +393,13 @@ int processEvents(eventLoop *el, int flags)
                 tvp->tv_usec = 0;
             }
         } else {
+
             /* 不阻塞，将超时时间设置为0 */
             if (flags & EVENT_DONT_WAIT) {
                 tv.tv_sec = tv.tv_usec = 0;
                 tvp = &tv;
             } else {
+
                 /* 阻塞，设置为NULL */
                 tvp = NULL; /* wait forever */
             }
@@ -439,9 +428,10 @@ int processEvents(eventLoop *el, int flags)
             processed++;
         }
 }
-    /* Check time events */
-    if (flags & EVENT_TIME_EVENTS)
+    /* 检查时间事件是否就绪 */
+    if (flags & EVENT_TIME_EVENTS) {
         processed += processTimeEvents(el);
+    }
 
-    return processed; /* return the number of processed file/time events */
+    return processed;
 }

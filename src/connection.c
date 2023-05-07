@@ -13,6 +13,7 @@
 #include "event.h"
 #include "server.h"
 #include "error.h"
+#include "log.h"
 
 ConnectionType CT_Socket;
 
@@ -108,12 +109,12 @@ int connGetState(connection *conn) {
     return conn->state;
 }
 
-int netSetBlock(int fd, int non_block) {
+unsigned long netSetBlock(int fd, int non_block) {
     int flags;
 
     /* 获取fd的属性 */
     if ((flags = fcntl(fd, F_GETFL)) == -1) {
-        printf("fcntl(F_GETFL): %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "fcntl(F_GETFL): %s.", strerror(errno));
         return ERROR_FAILED;
     }
 
@@ -124,57 +125,57 @@ int netSetBlock(int fd, int non_block) {
 
     /* 设置fd的属性 */
     if (fcntl(fd, F_SETFL, flags) == -1) {
-        printf("fcntl(F_SETFL,O_NONBLOCK): %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "fcntl(F_SETFL,O_NONBLOCK): %s.", strerror(errno));
         return ERROR_FAILED;
     }
     return ERROR_SUCCESS;
 }
 
-int netNonBlock(int fd) {
+unsigned long netNonBlock(int fd) {
     return netSetBlock(fd,1);
 }
 
-int netBlock(int fd) {
+unsigned long netBlock(int fd) {
     return netSetBlock(fd,0);
 }
 
-int connNonBlock(connection *conn) {
+unsigned long connNonBlock(connection *conn) {
     if (-1 == conn->fd) return ERROR_FAILED;
     return netNonBlock(conn->fd);
 }
 
-int netSetTcpNoDelay(int fd, int val)
+unsigned long netSetTcpNoDelay(int fd, int val)
 {
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) == -1)
     {
-        printf("setsockopt TCP_NODELAY: %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "setsockopt TCP_NODELAY: %s.", strerror(errno));
         return ERROR_FAILED;
     }
     return ERROR_SUCCESS;
 }
 
-int netEnableTcpNoDelay(int fd)
+unsigned long netEnableTcpNoDelay(int fd)
 {
     return netSetTcpNoDelay(fd, 1);
 }
 
-int netDisableTcpNoDelay(int fd)
+unsigned long netDisableTcpNoDelay(int fd)
 {
     return netSetTcpNoDelay(fd, 0);
 }
 
-int connEnableTcpNoDelay(connection *conn) {
+unsigned long connEnableTcpNoDelay(connection *conn) {
     if (conn->fd == -1) return ERROR_FAILED;
     return netEnableTcpNoDelay(conn->fd);
 }
 
-int netKeepAlive(int fd, int interval)
+unsigned long netKeepAlive(int fd, int interval)
 {
     int val = 1;
 
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1)
     {
-        printf("setsockopt SO_KEEPALIVE: %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "setsockopt SO_KEEPALIVE: %s.", strerror(errno));
         return ERROR_FAILED;
     }
 
@@ -186,7 +187,8 @@ int netKeepAlive(int fd, int interval)
     /* Send first probe after interval. */
     val = interval;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) < 0) {
-        printf("setsockopt TCP_KEEPIDLE: %s.\r\n", strerror(errno));
+
+        serverLog(LL_WARNING, "setsockopt TCP_KEEPIDLE: %s.", strerror(errno));
         return ERROR_FAILED;
     }
 
@@ -196,7 +198,7 @@ int netKeepAlive(int fd, int interval)
     val = interval/3;
     if (val == 0) val = 1;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) < 0) {
-        printf("setsockopt TCP_KEEPINTVL: %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "setsockopt TCP_KEEPINTVL: %s.", strerror(errno));
         return ERROR_FAILED;
     }
 
@@ -204,7 +206,7 @@ int netKeepAlive(int fd, int interval)
      * probes without getting a reply. */
     val = 3;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) < 0) {
-        printf("setsockopt TCP_KEEPCNT: %s.\r\n", strerror(errno));
+        serverLog(LL_WARNING, "setsockopt TCP_KEEPCNT: %s.", strerror(errno));
         return ERROR_FAILED;
     }
 #else
@@ -214,7 +216,7 @@ int netKeepAlive(int fd, int interval)
     return ERROR_SUCCESS;
 }
 
-int connKeepAlive(connection *conn, int interval) {
+unsigned long connKeepAlive(connection *conn, int interval) {
     if (conn->fd == -1) return ERROR_FAILED;
     return netKeepAlive(conn->fd, interval);
 }

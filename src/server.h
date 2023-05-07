@@ -47,7 +47,7 @@ typedef struct respCommand {
     // 命令名称，如SET、GET
     char *name;
 
-    // 命令处理函数，负责执行命令的逻辑
+    // 命令处理函数
     commandProc *proc;
 
     // 命令参数数量
@@ -55,28 +55,28 @@ typedef struct respCommand {
 }respCommand;
 
 typedef struct respServer {
-    eventLoop *el;
-    int port;
-    int ipFd;
-    int tcpBacklog;
-    int maxClient;
-    list *clients;
-    _Atomic uint64_t next_client_id;
-    _Atomic size_t client_max_querybuf_len; /* Limit for client query buffer length */
-    long long proto_max_bulk_len;   /* Protocol bulk length maximum size. */
-    client *current_client;
-    dict *commands;             /* Command table */
-    int tcpkeepalive;
-    list *clients_pending_write;
-    list *clients_to_close;     /* Clients to close asynchronously */
-    char *logfile;                  /* Path of log file */
-    int verbosity;
-    int syslog_enabled;
-    time_t timezone;
-    int daylight_active;        /* Currently in daylight saving time. */
-    mstime_t mstime;            /* 'unixtime' in milliseconds. */
-    ustime_t ustime;            /* 'unixtime' in microseconds. */
-    _Atomic time_t unixtime;    /* Unix time sampled every cron cycle. */
+    eventLoop *el;                          /* 事件循环定时器 */
+    int port;                               /* 端口 */
+    int ipFd;                               /* 服务端侦听套接字 */
+    int tcpBacklog;                         /* TCP连接请求等待队列长度 */
+    int maxClient;                          /* 最大客户端数量 */
+    list *clients;                          /* 客户端链表 */
+    _Atomic uint64_t next_client_id;        /* 下一个客户端ID */
+    _Atomic size_t client_max_querybuf_len; /* 最大请求缓冲区限度 */
+    long long proto_max_bulk_len;           /* 最大RESP协议<length>限度 */
+    client *current_client;                 /* 当前连接客户端 */
+    dict *commands;                         /* 已支持的命令表 */
+    int tcpkeepalive;                       /* TCP保活时间 */
+    list *clients_pending_write;            /* 待回复客户端链表 */
+    list *clients_to_close;                 /* 待异步释放客户端 */
+    char *logfile;                          /* 日志文件路径 */
+    int verbosity;                          /* 日志等级 */
+    int syslog_enabled;                     /* syslog使能 */
+    time_t timezone;                        /* 时区 */
+    int daylight_active;
+    mstime_t mstime;                        /* 以毫秒为单位的'unixtime' */
+    ustime_t ustime;                        /* 以微秒为单位的'unixtime' */
+    _Atomic time_t unixtime;
 }respServer;
 
 typedef struct clientReplyBlock {
@@ -85,41 +85,24 @@ typedef struct clientReplyBlock {
 } clientReplyBlock;
 
 struct client {
-    uint64_t id;            /* Client incremental unique ID. */
-    connection *conn;
-
-    // 查询缓冲区，用于存放客户端请求数据
-    sds querybuf;           /* Buffer we use to accumulate client queries. */
-
-    // 查询缓冲区最新读取位置
-    size_t qb_pos;          /* The position we have read in querybuf. */
-    int argc;               /* Num of arguments of current command. */
-    robj **argv;            /* Arguments of current command. */
-
-    // 命令所有参数的长度,即所有参数的<length>之和
-    size_t argv_len_sum;    /* Sum of lengths of objects in argv list. */
-
-    struct respCommand *cmd;  /* Last command executed. */
-    int reqtype;            /* Request protocol type: PROTO_REQ_* */
-
-    // 当前解析的命令请求中尚未处理的命令参数数量，它是通过读取RESP协议中的<element-num>得到的
-    // 每解析完命令的一个参数，值就减1
-    int multibulklen;       /* Number of multi bulk arguments left to read. */
-
-    // 当前读取命令的参数长度,即RESP格式 $<length>\r\n<data>\r\n 中的<length>,初始值为-1
-    // 在读取参数时，才会被赋值
-    long bulklen;           /* Length of bulk argument in multi bulk request. */
-
-    // 链表回复缓冲区
-    list *reply;            /* List of reply objects to send to the client. */
-    unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */ /* 链表回复缓冲区的字节数 */
-    size_t sentlen;         /* Amount of bytes already sent in the current
-                               buffer or object being sent. */
+    uint64_t id;                    /* 客户端ID */
+    connection *conn;               /* 客户端关联的连接 */
+    sds querybuf;                   /* 查询缓冲区，用于存放客户端请求数据 */
+    size_t qb_pos;                  /* 查询缓冲区最新读取位置 */
+    int argc;                       /* 当前命令参数数量 */
+    robj **argv;                    /* 当前命令参数 */
+    size_t argv_len_sum;            /* 命令所有参数的长度,即所有参数的<length>之和 */
+    struct respCommand *cmd;        /* 当前执行命令 */
+    int reqtype;                    /* R请求协议类型 */
+    int multibulklen;               /* 当前命令尚未解析的参数个数 */
+    long bulklen;                   /* resp协议个数'$<length>\r\n<data>\r\n'中的<length> */
+    list *reply;                    /* 非固定回复缓冲区 */
+    unsigned long long reply_bytes; /* 非固定回复缓冲区的字节数 */
+    size_t sentlen;                 /* Amount of bytes already sent in the current
+                                        buffer or object being sent. */
     listNode *client_list_node;
-
-    /* Response buffer */
-    int bufpos;/* 固定回复缓冲区的最新操作位置 */
-    char buf[PROTO_REPLY_CHUNK_BYTES];/* 固定回复缓冲区 */
+    int bufpos;                     /* 固定回复缓冲区的最新操作位置 */
+    char buf[PROTO_REPLY_CHUNK_BYTES];  /* 固定回复缓冲区 */
 };
 
 extern respServer server;
