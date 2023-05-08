@@ -5,6 +5,8 @@
 #ifndef RESP_SERVER_OBJECT_H
 #define RESP_SERVER_OBJECT_H
 
+#include <limits.h>
+
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
  * is set to one of this fields for this object. */
@@ -42,6 +44,11 @@
 #define OBJ_SHARED_REFCOUNT INT_MAX     /* Global object never destroyed. */
 #define OBJ_STATIC_REFCOUNT (INT_MAX-1) /* Object allocated in the stack. */
 #define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
+#define OBJ_SHARED_BULKHDR_LEN 32
+#define OBJ_SHARED_INTEGERS 10000
+#define OBJ_SHARED_REFCOUNT INT_MAX     /* Global object never destroyed. */
+#define OBJ_STATIC_REFCOUNT (INT_MAX-1) /* Object allocated in the stack. */
+#define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
 
 #define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
 
@@ -56,11 +63,16 @@ typedef struct respObject {
 } robj;
 
 typedef struct sharedObjectsStruct{
-    robj *crlf, *ok, *err, *pong;
+    robj *crlf, *ok, *err, *pong,
+    *integers[OBJ_SHARED_INTEGERS],
+    *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
+    *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
 } sharedObjectsStruct;
 
 robj *createObject(int type, void *ptr);
 robj *createStringObject(const char *ptr, size_t len);
 void decrRefCount(robj *o);
+size_t stringObjectLen(robj *o);
+robj *makeObjectShared(robj *o);
 
 #endif //RESP_SERVER_OBJECT_H

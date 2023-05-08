@@ -82,6 +82,37 @@ void addReplyErrorLength(client *c, const char *s, size_t len) {
     addReplyProto(c,"\r\n",2);
 }
 
+void addReplyLongLongWithPrefix(client *c, long long ll, char prefix) {
+    char buf[128];
+    int len;
+
+    /* Things like $3\r\n or *2\r\n are emitted very often by the protocol
+     * so we have a few shared objects to use if the integer is small
+     * like it is most of the times. */
+    if (prefix == '*' && ll < OBJ_SHARED_BULKHDR_LEN && ll >= 0) {
+        addReply(c,shared.mbulkhdr[ll]);
+        return;
+    } else if (prefix == '$' && ll < OBJ_SHARED_BULKHDR_LEN && ll >= 0) {
+        addReply(c,shared.bulkhdr[ll]);
+        return;
+    }
+
+    buf[0] = prefix;
+    len = ll2string(buf+1,sizeof(buf)-1,ll);
+    buf[len+1] = '\r';
+    buf[len+2] = '\n';
+    addReplyProto(c,buf,len+3);
+}
+
+void addReplyBulkLen(client *c, robj *obj) {
+    size_t len = stringObjectLen(obj);
+
+    if (len < OBJ_SHARED_BULKHDR_LEN)
+        addReply(c,shared.bulkhdr[len]);
+    else
+        addReplyLongLongWithPrefix(c,len,'$');
+}
+
 /*================================= reply interface ================================= */
 
 void addReplyError(client *c, const char *err) {
@@ -107,6 +138,15 @@ void addReply(client *c, robj *obj) {
     }
 }
 
+/* Add the SDS 's' string to the client output buffer, as a side effect
+ * the SDS string is freed. */
+void addReplySds(client *c, sds s) {
+    prepareClientToWrite(c);
+    if (addReplyToBuffer(c,s,sdslen(s)) != C_OK)
+        addReplyProtoToList(c,s,sdslen(s));
+    sdsfree(s);
+}
+
 void addReplyErrorFormat(client *c, const char *fmt, ...) {
     va_list ap;
     va_start(ap,fmt);
@@ -118,5 +158,39 @@ void addReplyErrorFormat(client *c, const char *fmt, ...) {
      * invalid protocol is emitted. */
     s = sdsmapchars(s, "\r\n", "  ",  2);
     addReplyErrorLength(c,s,sdslen(s));
+    sdsfree(s);
+}
+
+void addReplyBulk(client *c, robj *obj) {
+    addReplyBulkLen(c,obj);
+    addReply(c,obj);
+    addReply(c,shared.crlf);
+}
+
+void addReplyErrorObject(client *c, robj *err) {
+    addReply(c, err);
+}
+
+/* See addReplyErrorLength for expectations from the input string. */
+void addReplyErrorSds(client *c, sds err) {
+    addReplyErrorLength(c,err,sdslen(err));
+}
+
+void addReplyStatusLength(client *c, const char *s, size_t len) {
+    addReplyProto(c,"+",1);
+    addReplyProto(c,s,len);
+    addReplyProto(c,"\r\n",2);
+}
+
+void addReplyStatus(client *c, const char *status) {
+    addReplyStatusLength(c,status,strlen(status));
+}
+
+void addReplyStatusFormat(client *c, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap,fmt);
+    sds s = sdscatvprintf(sdsempty(),fmt,ap);
+    va_end(ap);
+    addReplyStatusLength(c,s,sdslen(s));
     sdsfree(s);
 }

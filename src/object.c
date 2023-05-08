@@ -31,8 +31,11 @@
 #include "server.h"
 #include "zmalloc.h"
 #include "object.h"
+#include "util.h"
+#include "log.h"
 #include <math.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #ifdef __CYGWIN__
 #define strtold(a,b) ((long double)strtod((a),(b)))
@@ -107,8 +110,7 @@ void freeSetObject(robj *o) {
         zfree(o->ptr);
         break;
     default:
-        break;
-        //serverPanic("Unknown set encoding type");
+        serverPanic("Unknown set encoding type");
     }
 }
 
@@ -121,10 +123,25 @@ void freeStringObject(robj *o) {
 void decrRefCount(robj *o) {
     if (o->refcount == 1) {
         switch(o->type) {
-        case OBJ_STRING: freeStringObject(o); break;
-        default: break;
+            case OBJ_STRING: freeStringObject(o); break;
+            default: break;
         }
         zfree(o);
     }
+}
+
+size_t stringObjectLen(robj *o) {
+    serverAssert(o->type == OBJ_STRING);
+    if (sdsEncodedObject(o)) {
+        return sdslen(o->ptr);
+    } else {
+        return sdigits10((long)o->ptr);
+    }
+}
+
+robj *makeObjectShared(robj *o) {
+    serverAssert(o->refcount == 1);
+    o->refcount = OBJ_SHARED_REFCOUNT;
+    return o;
 }
 

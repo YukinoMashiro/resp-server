@@ -4,10 +4,7 @@
 
 #include "server.h"
 #include "reply.h"
-
-void testCommand(client *c){
-    addReply(c, shared.ok);
-}
+#include "log.h"
 
 void commandCommand(client *c){
     addReply(c, shared.ok);
@@ -17,10 +14,29 @@ void pingCommand(client *c) {
     addReply(c, shared.pong);
 }
 
+void setCommand(client *c) {
+    int j;
+
+    /* 打印命令行参数 */
+    for (j = 0; j < c->argc; j++) {
+        serverLog(LL_WARNING, "argv[%d]: %s", j, c->argv[j]->ptr);
+    }
+
+    /* 向客户端回复字符串 */
+    addReplyBulk(c, createObject(OBJ_STRING,sdsnew(
+            "set command")));
+}
+
+void getCommand(client *c) {
+    addReplyBulk(c, createObject(OBJ_STRING,sdsnew(
+            "get command")));
+}
+
 respCommand commandTable[] = {
-        {"test",testCommand,0},
         {"command", commandCommand, -1},
         {"ping", pingCommand, 0},
+        {"set",setCommand,0},
+        {"get", getCommand, 0},
 };
 
 int main(int argc, char **argv) {

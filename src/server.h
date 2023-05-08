@@ -70,7 +70,6 @@ typedef struct respServer {
     long long proto_max_bulk_len;           /* 最大RESP协议<length>限度 */
     int tcpkeepalive;                       /* TCP保活时间 */
     int verbosity;                          /* 日志等级 */
-    int syslog_enabled;                     /* syslog使能 */
 
     // 其他类
     eventLoop *el;                          /* 事件循环定时器 */

@@ -20,6 +20,7 @@
 #include "command.h"
 #include "reply.h"
 #include "log.h"
+#include "object.h"
 
 respServer server;
 sharedObjectsStruct shared;
@@ -35,10 +36,22 @@ void populateCommandTable(respCommand *commandTab, int numCommands) {
 }
 
 void createSharedObjects(void) {
+    int j;
     shared.crlf = createObject(OBJ_STRING, sdsnew("\r\n"));
     shared.ok = createObject(OBJ_STRING, sdsnew("+OK\r\n"));
     shared.err = createObject(OBJ_STRING, sdsnew("-ERR\r\n"));
     shared.pong = createObject(OBJ_STRING,sdsnew("+PONG\r\n"));
+    for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
+        shared.integers[j] =
+                makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
+        shared.integers[j]->encoding = OBJ_ENCODING_INT;
+    }
+    for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
+        shared.mbulkhdr[j] = createObject(OBJ_STRING,
+                                          sdscatprintf(sdsempty(),"*%d\r\n",j));
+        shared.bulkhdr[j] = createObject(OBJ_STRING,
+                                         sdscatprintf(sdsempty(),"$%d\r\n",j));
+    }
 }
 
 void freeClientReplyValue(void *o) {
@@ -391,7 +404,6 @@ void initDefaultOptions() {
     server.proto_max_bulk_len = PROTO_MAX_BULK_LEN;
     server.tcpkeepalive = DEFAULT_TCP_KEEPALIVE;
     server.verbosity = LL_NOTICE;
-    server.syslog_enabled = 0;
 }
 
 void initServerAttr() {
