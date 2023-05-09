@@ -17,7 +17,6 @@
 #include "endianconv.h"
 #include "util.h"
 #include "dict.h"
-#include "command.h"
 #include "reply.h"
 #include "log.h"
 #include "object.h"
