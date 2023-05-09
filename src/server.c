@@ -817,8 +817,8 @@ void eventMain() {
     }
 }
 
-
-void RESP_INIT_OPTIONS(int port, char *logfile, respCommand *commandTab, int numCommand) {
+/* 初始化配置 */
+void respInitOptions(int port, char *logfile, respCommand *commandTab, int numCommand) {
     serverAssert(logfile != NULL);
     serverAssert(commandTab != NULL);
 
@@ -829,6 +829,7 @@ void RESP_INIT_OPTIONS(int port, char *logfile, respCommand *commandTab, int num
     initServer(commandTab, numCommand);
 }
 
-void RESP_LISTEN_EVENT() {
+/* 循环侦听事件 */
+void respListenEvent() {
     eventMain();
 }

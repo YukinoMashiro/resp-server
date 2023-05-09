@@ -118,8 +118,8 @@ extern sharedObjectsStruct shared;
 
 void addReplyError(client *c, const char *err);
 
-void RESP_INIT_OPTIONS(int port, char *logfile, respCommand *commandTab, int numCommand);
+void respInitOptions(int port, char *logfile, respCommand *commandTab, int numCommand);
 
-void RESP_LISTEN_EVENT();
+void respListenEvent();
 
 #endif //RESP_SERVER_SERVER_H

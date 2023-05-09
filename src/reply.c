@@ -194,3 +194,29 @@ void addReplyStatusFormat(client *c, const char *fmt, ...) {
     addReplyStatusLength(c,s,sdslen(s));
     sdsfree(s);
 }
+
+void addReplyBulkCBuffer(client *c, const void *p, size_t len) {
+    addReplyLongLongWithPrefix(c,len,'$');
+    addReplyProto(c,p,len);
+    addReply(c,shared.crlf);
+}
+
+/* Add a long long as a bulk reply */
+void addReplyBulkLongLong(client *c, long long ll) {
+    char buf[64];
+    int len;
+
+    len = ll2string(buf,64,ll);
+    addReplyBulkCBuffer(c,buf,len);
+}
+
+void addReplyAggregateLen(client *c, long length, int prefix) {
+    if (prefix == '*' && length < OBJ_SHARED_BULKHDR_LEN)
+        addReply(c,shared.mbulkhdr[length]);
+    else
+        addReplyLongLongWithPrefix(c,length,prefix);
+}
+
+void addReplyArrayLen(client *c, long length) {
+    addReplyAggregateLen(c,length,'*');
+}
