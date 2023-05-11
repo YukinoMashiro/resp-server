@@ -418,10 +418,7 @@ void initServerAttr() {
     server.timezone = getTimeZone();
 }
 
-/**
- * 处理客户端请求缓冲区数据
- * @param c
- */
+/* 处理客户端请求缓冲区数据 */
 void processInputBuffer(client *c) {
     while(c->qb_pos < sdslen(c->querybuf)) {
         /*
@@ -455,17 +452,11 @@ void processInputBuffer(client *c) {
     }
 }
 
-/**
- * 读取客户端发送的数据
- * @param el
- * @param fd
- * @param clientData
- * @param mask
- */
+/* 读取客户端发送的数据 */
 void readQueryFromClient(eventLoop *el, int fd, void *clientData, int mask) {
     connection *conn = (connection *)clientData;
 
-    assert(NULL != conn);
+    serverAssert(NULL != conn);
 
     client *c = connGetPrivateData(conn);
     int nread, readlen;
@@ -575,6 +566,23 @@ client *createClient(connection *conn) {
     return c;
 }
 
+int genericAccept(int s, struct sockaddr *sa, socklen_t *len) {
+    int fd;
+    while(1) {
+        fd = accept(s,sa,len);
+        if (fd == -1) {
+            if (errno == EINTR)
+                continue;
+            else {
+                serverLog(LL_DEBUG, "accept: %s", strerror(errno));
+                return -1;
+            }
+        }
+        break;
+    }
+    return fd;
+}
+
 void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     socklen_t saSize;
     struct sockaddr_in sa;
@@ -589,7 +597,7 @@ void acceptTcpHandler(eventLoop *el, int fd, void *clientData, int mask) {
     /* 每次事件循环中最多接收1000个客户请求，防止短时间内处理过多客户请求导致进程阻塞 */
     while(max--) {
         saSize = sizeof(sa);
-        clientFd = accept(fd, (struct sockaddr*)&sa, &saSize);
+        clientFd = genericAccept(fd, (struct sockaddr*)&sa, &saSize);
         if (-1 == clientFd) {
             if (errno != EWOULDBLOCK) {
                 serverLog(LL_WARNING,
@@ -782,7 +790,7 @@ void initServer(respCommand *commandTab, int numCommands) {
     populateCommandTable(commandTab, numCommands);
 
     /* 创建事件循环器 */
-    server.el = createEventLoop(server.maxClient);
+    server.el = createEventLoop(server.maxClient + CONFIG_FDSET_INCR);
     if (NULL == server.el) {
         return;
     }
@@ -818,8 +826,8 @@ void eventMain() {
 
 /* 初始化配置 */
 void respInitOptions(int port, char *logfile, respCommand *commandTab, int numCommand) {
-    serverAssert(logfile != NULL);
-    serverAssert(commandTab != NULL);
+    serverAssert(NULL != logfile);
+    serverAssert(NULL != commandTab);
 
     initDefaultOptions();
     server.port = port;

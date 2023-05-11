@@ -16,6 +16,13 @@
 #define DEFAULT_BACKLOG 511;
 #define MAX_CLIENT_LIMIT 10000;
 
+/* When configuring the server eventloop, we setup it so that the total number
+ * of file descriptors we can handle are server.maxclients + RESERVED_FDS +
+ * a few more to stay safe. Since RESERVED_FDS defaults to 32, we add 96
+ * in order to make sure of not over provisioning more than 128 fds. */
+#define CONFIG_MIN_RESERVED_FDS 32
+#define CONFIG_FDSET_INCR (CONFIG_MIN_RESERVED_FDS+96)
+
 /* Protocol and I/O related defines */
 #define PROTO_MAX_QUERYBUF_LEN  (1024*1024*1024) /* 1GB max query buffer. */
 #define PROTO_IOBUF_LEN         (1024*16)  /* Generic I/O buffer size */

@@ -91,7 +91,13 @@ void testCommand1(client *c) {
     addReplyBulkCBuffer(c, "hanser", strlen("hanser"));
 }
 
-/* 命令列表 */
+/* 命令列表
+命令行的参数个数，用于检查命令请求格式是否正确
+如果这个值为负数-N，那么表示参数的数量大于等于N
+如果这个值为0，那么不做检查
+如果这个值大于0，需要相等
+注意：命令的名字本身也是一个参数
+ * */
 respCommand commandTable[] = {
         {"command", commandCommand, -1},
         {"ping", pingCommand, 0},
