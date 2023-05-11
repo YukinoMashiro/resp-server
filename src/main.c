@@ -108,7 +108,7 @@ respCommand commandTable[] = {
 };
 
 int main(int argc, char **argv) {
-    respInitOptions(2234,
+    respInitOptions(2233,
                       "\0",
                       commandTable,
                       sizeof(commandTable) / sizeof(struct respCommand));
